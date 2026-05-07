@@ -69,7 +69,8 @@ def montar_dados_impressao(texto, font_size='normal'):
         inicio += b'\x1d!\x11'
     elif font_size == 'medium':
         inicio += b'\x1bM\x00'  # Font A
-        inicio += b'\x1b3\x16'  # line spacing 22
+        inicio += b'\x1b3\x18'  # line spacing 24
+        inicio += b'\x1bE\x01'  # bold on (ligeiramente maior/mais legível)
         inicio += b'\x1d!\x00'  # normal size
     elif font_size == 'compact':
         inicio += b'\x1bM\x01'  # Font B (menor)
@@ -79,7 +80,7 @@ def montar_dados_impressao(texto, font_size='normal'):
         inicio += b'\x1bM\x00'
         inicio += b'\x1b3\x18'
         inicio += b'\x1d!\x00'
-    fim = b'\x1d!\x00\x1bM\x00\x1b2'  # reset size/font/line spacing default
+    fim = b'\x1d!\x00\x1bE\x00\x1bM\x00\x1b2'  # reset size/bold/font/line spacing default
     return inicio + dados_texto + fim
 
 # Função para imprimir um texto na impressora selecionada (modo RAW)
