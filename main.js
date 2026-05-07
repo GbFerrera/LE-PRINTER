@@ -35,8 +35,10 @@ let selectedPrinter = null;
 const recentlyPrinted = new Set(); // deduplication guard
 
 // Backend configuration
-const BACKEND_URL = 'http://s0kwc0c8kg884cw0okwcwggo.72.61.219.179.sslip.io';
-const WS_URL = BACKEND_URL.replace(/^http/, 'ws') + '/ws';
+const BACKEND_URL = 'https://api.linkeats.com.br';
+const backendUrl = new URL(BACKEND_URL);
+const wsProtocol = backendUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+const WS_URL = `${wsProtocol}//${backendUrl.host}/ws`;
 
 // Decode JWT payload (no verification needed - backend validates on connect)
 function decodeJwtPayload(token) {
@@ -389,7 +391,8 @@ async function printOrder(order) {
     const response = await sendPrinterCommand({
       action: 'print',
       text: text,
-      printer: selectedPrinter || undefined
+      printer: selectedPrinter || undefined,
+      font_size: 'large'
     });
 
     if (response.success) {

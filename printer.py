@@ -55,8 +55,21 @@ def encode_para_impressora(texto):
     normalizado = unicodedata.normalize('NFKD', texto)
     return normalizado.encode('ascii', errors='replace')
 
+def montar_dados_impressao(texto, font_size='normal'):
+    # ESC/POS:
+    # ESC @      -> init printer
+    # GS ! n     -> select character size (0x00 normal, 0x11 double width+height)
+    dados_texto = encode_para_impressora(texto)
+    inicio = b'\x1b@'
+    if font_size == 'large':
+        inicio += b'\x1d!\x11'
+    else:
+        inicio += b'\x1d!\x00'
+    fim = b'\x1d!\x00'
+    return inicio + dados_texto + fim
+
 # Função para imprimir um texto na impressora selecionada (modo RAW)
-def imprimir_texto(texto, impressora_nome=None):
+def imprimir_texto(texto, impressora_nome=None, font_size='normal'):
     if not IS_WINDOWS:
         return {"success": False, "error": "Impressão real disponível apenas no Windows. Use modo simulação."}
     
@@ -73,7 +86,7 @@ def imprimir_texto(texto, impressora_nome=None):
             hJob = win32print.StartDocPrinter(hPrinter, 1, ("Pedido Link Eats", None, "RAW"))
             try:
                 win32print.StartPagePrinter(hPrinter)
-                dados = encode_para_impressora(texto)
+                dados = montar_dados_impressao(texto, font_size)
                 win32print.WritePrinter(hPrinter, dados)
                 win32print.EndPagePrinter(hPrinter)
             finally:
@@ -104,7 +117,8 @@ def processar_comando(comando):
         elif action == 'print':
             texto = comando.get('text', '')
             impressora = comando.get('printer')
-            resultado = imprimir_texto(texto, impressora)
+            font_size = comando.get('font_size', 'normal')
+            resultado = imprimir_texto(texto, impressora, font_size)
             return resultado
         
         elif action == 'test':
