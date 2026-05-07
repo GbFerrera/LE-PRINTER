@@ -392,7 +392,7 @@ async function printOrder(order) {
       action: 'print',
       text: text,
       printer: selectedPrinter || undefined,
-      font_size: 'medium'
+      font_size: 'compact'
     });
 
     if (response.success) {

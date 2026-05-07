@@ -58,17 +58,28 @@ def encode_para_impressora(texto):
 def montar_dados_impressao(texto, font_size='normal'):
     # ESC/POS:
     # ESC @      -> init printer
-    # GS ! n     -> select character size:
-    # 0x00 normal, 0x01 largura dupla (médio), 0x11 largura+altura dupla (grande)
+    # ESC M n    -> font family (0 = Font A, 1 = Font B/menor)
+    # ESC 3 n    -> line spacing
+    # GS ! n     -> select character size
     dados_texto = encode_para_impressora(texto)
     inicio = b'\x1b@'
     if font_size == 'large':
+        inicio += b'\x1bM\x00'  # Font A
+        inicio += b'\x1b3\x20'  # line spacing 32
         inicio += b'\x1d!\x11'
     elif font_size == 'medium':
-        inicio += b'\x1d!\x01'
+        inicio += b'\x1bM\x00'  # Font A
+        inicio += b'\x1b3\x18'  # line spacing 24
+        inicio += b'\x1d!\x00'  # normal size
+    elif font_size == 'compact':
+        inicio += b'\x1bM\x01'  # Font B (menor)
+        inicio += b'\x1b3\x14'  # line spacing 20
+        inicio += b'\x1d!\x00'  # normal size
     else:
+        inicio += b'\x1bM\x00'
+        inicio += b'\x1b3\x18'
         inicio += b'\x1d!\x00'
-    fim = b'\x1d!\x00'
+    fim = b'\x1d!\x00\x1bM\x00\x1b2'  # reset size/font/line spacing default
     return inicio + dados_texto + fim
 
 # Função para imprimir um texto na impressora selecionada (modo RAW)
