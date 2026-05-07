@@ -42,7 +42,7 @@ def obter_impressora_padrao():
 # Converte texto com acentos para encoding compatível com impressoras térmicas
 def encode_para_impressora(texto):
     # Tenta CP850 (padrão DOS/térmicas) primeiro
-    try:
+    try:   
         return texto.encode('cp850')
     except (UnicodeEncodeError, LookupError):
         pass
