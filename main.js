@@ -106,6 +106,17 @@ function getPaymentMethodText(method) {
   return methods[method] || method;
 }
 
+function formatDisplayNumber(id, number) {
+  if (number) return `#${number}`;
+  if (!id) return '#0000';
+  const base = String(id).replace(/-/g, '').slice(0, 8);
+  const numericHash = parseInt(base, 16);
+  if (Number.isNaN(numericHash)) {
+    return `#${base.slice(-4).padStart(4, '0')}`;
+  }
+  return `#${String(numericHash).slice(0, 4).padStart(4, '0')}`;
+}
+
 function createWindow() {
   console.log('Creating window...');
   
@@ -261,16 +272,13 @@ function formatOrderText(order) {
   text += ' '.repeat(pad) + empresa + '\n';
   text += '         NOVO PEDIDO\n';
   text += '================================\n';
-  text += `Pedido: #${order.id.substring(0, 8)}\n`;
+  text += `Pedido: ${formatDisplayNumber(order.id, order.order_number)}\n`;
   text += `Tipo: ${getOrderTypeText(order.order_type)}\n`;
   text += `Status: ${getStatusText(order.status)}\n`;
   text += `Data: ${new Date(order.created_at).toLocaleString('pt-BR')}\n`;
   
   if (order.is_scheduled && order.scheduled_for) {
     text += `Agendado para: ${new Date(order.scheduled_for).toLocaleString('pt-BR')}\n`;
-  }
-  if (order.order_number) {
-    text += `N. Pedido: ${order.order_number}\n`;
   }
   
   text += '================================\n';
@@ -388,7 +396,7 @@ function formatTabText(tabData) {
   text += ' '.repeat(pad) + empresa + '\n';
   text += '       COMPROVANTE COMANDA\n';
   text += '================================\n';
-  text += `Comanda: ${tabData?.tab_id || '-'}\n`;
+  text += `Comanda: ${formatDisplayNumber(tabData?.tab_id)}\n`;
   text += `Mesa: ${tableName}\n`;
   text += `Pedidos: ${orders.length}\n`;
   if (tabData?.opened_at) {
@@ -397,10 +405,7 @@ function formatTabText(tabData) {
   text += '================================\n';
 
   orders.forEach((order, orderIdx) => {
-    text += `Pedido ${orderIdx + 1}: #${(order?.id || '').substring(0, 8)}\n`;
-    if (order?.order_number) {
-      text += `N. Pedido: ${order.order_number}\n`;
-    }
+    text += `Pedido ${orderIdx + 1}: ${formatDisplayNumber(order?.id, order?.order_number)}\n`;
     text += `Hora: ${new Date(order.created_at).toLocaleString('pt-BR')}\n`;
     if (order?.customer_name) {
       text += `Cliente: ${order.customer_name}\n`;
