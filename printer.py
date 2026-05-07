@@ -58,11 +58,14 @@ def encode_para_impressora(texto):
 def montar_dados_impressao(texto, font_size='normal'):
     # ESC/POS:
     # ESC @      -> init printer
-    # GS ! n     -> select character size (0x00 normal, 0x11 double width+height)
+    # GS ! n     -> select character size:
+    # 0x00 normal, 0x01 largura dupla (médio), 0x11 largura+altura dupla (grande)
     dados_texto = encode_para_impressora(texto)
     inicio = b'\x1b@'
     if font_size == 'large':
         inicio += b'\x1d!\x11'
+    elif font_size == 'medium':
+        inicio += b'\x1d!\x01'
     else:
         inicio += b'\x1d!\x00'
     fim = b'\x1d!\x00'
