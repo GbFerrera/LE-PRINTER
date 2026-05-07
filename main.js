@@ -35,7 +35,7 @@ let selectedPrinter = null;
 const recentlyPrinted = new Set(); // deduplication guard
 
 // Backend configuration
-const BACKEND_URL = 'https://api.linkeats.com.br';
+const BACKEND_URL = 'http://192.168.1.7:3333';
 const backendUrl = new URL(BACKEND_URL);
 const wsProtocol = backendUrl.protocol === 'https:' ? 'wss:' : 'ws:';
 const WS_URL = `${wsProtocol}//${backendUrl.host}/ws`;
@@ -376,6 +376,82 @@ function formatOrderText(order) {
   return text;
 }
 
+// Format consolidated tab receipt (single print with all linked orders)
+function formatTabText(tabData) {
+  let text = '';
+  const empresa = companyName || 'LINK EATS';
+  const pad = Math.max(0, Math.floor((32 - empresa.length) / 2));
+  const tableName = tabData?.table_name || '-';
+  const orders = Array.isArray(tabData?.orders) ? tabData.orders : [];
+
+  text += '================================\n';
+  text += ' '.repeat(pad) + empresa + '\n';
+  text += '       COMPROVANTE COMANDA\n';
+  text += '================================\n';
+  text += `Comanda: ${tabData?.tab_id || '-'}\n`;
+  text += `Mesa: ${tableName}\n`;
+  text += `Pedidos: ${orders.length}\n`;
+  if (tabData?.opened_at) {
+    text += `Aberta em: ${new Date(tabData.opened_at).toLocaleString('pt-BR')}\n`;
+  }
+  text += '================================\n';
+
+  orders.forEach((order, orderIdx) => {
+    text += `Pedido ${orderIdx + 1}: #${(order?.id || '').substring(0, 8)}\n`;
+    if (order?.order_number) {
+      text += `N. Pedido: ${order.order_number}\n`;
+    }
+    text += `Hora: ${new Date(order.created_at).toLocaleString('pt-BR')}\n`;
+    if (order?.customer_name) {
+      text += `Cliente: ${order.customer_name}\n`;
+    }
+    if (order?.waiter_name) {
+      text += `Garcom: ${order.waiter_name}\n`;
+    }
+    text += '--------------------------------\n';
+
+    (order.items || []).forEach((item, idx) => {
+      text += `${idx + 1}. ${item.quantity}x ${item.product?.name || 'Item'}\n`;
+      if (item.price) {
+        text += `   Valor unit: R$ ${parseFloat(item.price).toFixed(2)}\n`;
+      }
+
+      let complementTotal = 0;
+      (item.complements || []).forEach((c) => {
+        const cName = c.complement?.name || '';
+        if (cName) {
+          const cPrice = c.price ? parseFloat(c.price) : 0;
+          complementTotal += cPrice;
+          const cPriceText = cPrice > 0 ? ` +R$ ${cPrice.toFixed(2)}` : '';
+          text += `   + ${cName}${cPriceText}\n`;
+        }
+      });
+
+      if (item.price) {
+        const itemSubtotal = (parseFloat(item.price) + complementTotal) * item.quantity;
+        text += `   Subtotal: R$ ${itemSubtotal.toFixed(2)}\n`;
+      }
+    });
+
+    if (order?.observation) {
+      text += `Obs: ${order.observation}\n`;
+    }
+    text += `Total pedido: R$ ${parseFloat(order.total || 0).toFixed(2)}\n`;
+    text += '================================\n';
+  });
+
+  text += `TOTAL COMANDA: R$ ${parseFloat(tabData?.total || 0).toFixed(2)}\n`;
+  text += '\n';
+  text += '   Obrigado pela preferencia!\n';
+  text += '      www.linkeats.com\n';
+  text += '\n';
+  text += '\n';
+  text += '\n';
+  text += '\n';
+
+  return text;
+}
+
 // Print order function
 // Returns { success, mode: 'simulation'|'printer', message }
 async function printOrder(order) {
@@ -387,7 +463,9 @@ async function printOrder(order) {
   }
 
   try {
-    const text = formatOrderText(order);
+    const text = order?.kind === 'tab_print'
+      ? formatTabText(order)
+      : formatOrderText(order);
     const response = await sendPrinterCommand({
       action: 'print',
       text: text,
@@ -470,6 +548,11 @@ function connectWebSocket() {
       } else if (data.type === 'print-order') {
         const orderId = data.payload?.id;
         console.log('🖨️ Print order event received:', orderId);
+        // Ensure manual/command prints also appear in pending list UI
+        // (renderer deduplicates by order id).
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('new-order', data.payload);
+        }
         if (!isAutoPrintEnabled) {
           console.log('⚠️ Auto-print disabled — skipping automatic print for:', orderId);
         } else if (orderId && recentlyPrinted.has(orderId)) {
@@ -481,6 +564,27 @@ function connectWebSocket() {
             setTimeout(() => recentlyPrinted.delete(orderId), 3000);
           }
           handlePrintOrderEvent(data.payload);
+        }
+      } else if (data.type === 'print-tab') {
+        const tabPrintId = data.payload?.id;
+        console.log('🧾 Print tab event received:', tabPrintId);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('new-order', data.payload);
+        }
+        if (!isAutoPrintEnabled) {
+          console.log('⚠️ Auto-print disabled — skipping automatic tab print for:', tabPrintId);
+        } else {
+          printOrder(data.payload).then((result) => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('print-result', {
+                orderId: tabPrintId,
+                success: result.success,
+                mode: result.mode,
+                message: result.message,
+                auto: true
+              });
+            }
+          });
         }
       } else if (data.type === 'order-status-update') {
         if (mainWindow && !mainWindow.isDestroyed()) {

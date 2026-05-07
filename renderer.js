@@ -257,7 +257,11 @@ function handleNewOrder(order) {
         updateOrdersList();
     }
     updateLastActivity();
-    showStatus(`Novo pedido recebido: #${order.id?.substring(0, 8)}`, 'info');
+    if (order?.kind === 'tab_print') {
+        showStatus(`Comanda recebida para impressão: mesa ${order.table_name || '-'}`, 'info');
+    } else {
+        showStatus(`Novo pedido recebido: #${order.id?.substring(0, 8)}`, 'info');
+    }
 }
 
 // Handle print result
@@ -340,6 +344,7 @@ function updateOrdersList() {
 
 // Create order element
 function createOrderElement(order) {
+    const isTabPrint = order?.kind === 'tab_print';
     const createdAt = new Date(order.created_at);
     const timeStr = createdAt.toLocaleTimeString('pt-BR', { 
         hour: '2-digit', 
@@ -348,18 +353,24 @@ function createOrderElement(order) {
     
     const itemsCount = order.items ? order.items.length : 0;
     const itemsText = itemsCount === 1 ? '1 item' : `${itemsCount} itens`;
+    const tabOrdersCount = Array.isArray(order.orders) ? order.orders.length : 0;
+    const secondaryLine = isTabPrint
+        ? `${tabOrdersCount} pedido(s) • Total: R$ ${parseFloat(order.total || 0).toFixed(2)}`
+        : `${itemsText} • Total: R$ ${parseFloat(order.total || 0).toFixed(2)}`;
+    const title = isTabPrint ? `Comanda Mesa ${order.table_name || '-'}` : (order.customer_name || 'Cliente não informado');
+    const idLabel = isTabPrint ? `COMANDA ${order.tab_id || '-'}` : `#${order.id}`;
     
     return `
         <div class="order-item" data-order-id="${order.id}">
             <div class="order-header">
-                <span class="order-id">#${order.id}</span>
+                <span class="order-id">${idLabel}</span>
                 <span class="order-time">${timeStr}</span>
             </div>
             <div class="order-customer">
-                <strong>${order.customer_name || 'Cliente não informado'}</strong>
+                <strong>${title}</strong>
             </div>
             <div class="order-items">
-                ${itemsText} • Total: R$ ${parseFloat(order.total || 0).toFixed(2)}
+                ${secondaryLine}
             </div>
             <div class="order-actions">
                 <button class="btn-primary print-order-btn" data-order-id="${order.id}">
@@ -388,8 +399,39 @@ function closeOrderModal() {
 
 // Create order detail HTML
 function createOrderDetailHTML(order) {
+    const isTabPrint = order?.kind === 'tab_print';
     const createdAt = new Date(order.created_at);
     const dateStr = createdAt.toLocaleString('pt-BR');
+
+    if (isTabPrint) {
+        const orders = Array.isArray(order.orders) ? order.orders : [];
+        const ordersHtml = orders.map((o, idx) => {
+            const itemCount = Array.isArray(o.items) ? o.items.length : 0;
+            return `
+                <div class="order-item-detail">
+                    <div class="item-name">${idx + 1}. Pedido #${(o.id || '').substring(0, 8)} (${itemCount} item(ns))</div>
+                    <div class="item-price">R$ ${parseFloat(o.total || 0).toFixed(2)}</div>
+                </div>
+            `;
+        }).join('');
+
+        return `
+            <div class="order-detail-section">
+                <h4>Comanda para Impressão</h4>
+                <p><strong>Comanda:</strong> ${order.tab_id || '-'}</p>
+                <p><strong>Mesa:</strong> ${order.table_name || '-'}</p>
+                <p><strong>Data:</strong> ${dateStr}</p>
+                <p><strong>Pedidos:</strong> ${orders.length}</p>
+                <p><strong>Total:</strong> R$ ${parseFloat(order.total || 0).toFixed(2)}</p>
+            </div>
+            <div class="order-detail-section">
+                <h4>Pedidos vinculados</h4>
+                <div class="order-items-detail">
+                    ${ordersHtml || '<p>Nenhum pedido vinculado</p>'}
+                </div>
+            </div>
+        `;
+    }
     
     let itemsHTML = '';
     if (order.items && order.items.length > 0) {
@@ -469,11 +511,19 @@ async function printOrder(order) {
             const modeLabel = result.mode === 'simulation'
                 ? '(fila de simulação — sem impressora)'
                 : '(enviado para a impressora)';
-            showStatus(`Pedido #${order.id.substring(0,8)} na fila de impressão ${modeLabel}`, 'success');
+            if (order?.kind === 'tab_print') {
+                showStatus(`Comanda ${order.tab_id || '-'} na fila de impressão ${modeLabel}`, 'success');
+            } else {
+                showStatus(`Pedido #${order.id.substring(0,8)} na fila de impressão ${modeLabel}`, 'success');
+            }
             pendingOrders = pendingOrders.filter(o => o.id !== order.id);
             updateOrdersList();
         } else {
-            showStatus(`Erro ao imprimir pedido #${order.id.substring(0,8)}: ${result.message || 'erro desconhecido'}`, 'error');
+            if (order?.kind === 'tab_print') {
+                showStatus(`Erro ao imprimir comanda ${order.tab_id || '-'}: ${result.message || 'erro desconhecido'}`, 'error');
+            } else {
+                showStatus(`Erro ao imprimir pedido #${order.id.substring(0,8)}: ${result.message || 'erro desconhecido'}`, 'error');
+            }
         }
     } catch (error) {
         showStatus(`Erro ao imprimir: ${error.message}`, 'error');
