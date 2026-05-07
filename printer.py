@@ -69,7 +69,7 @@ def montar_dados_impressao(texto, font_size='normal'):
         inicio += b'\x1d!\x11'
     elif font_size == 'medium':
         inicio += b'\x1bM\x00'  # Font A
-        inicio += b'\x1b3\x18'  # line spacing 24
+        inicio += b'\x1b3\x16'  # line spacing 22
         inicio += b'\x1d!\x00'  # normal size
     elif font_size == 'compact':
         inicio += b'\x1bM\x01'  # Font B (menor)
