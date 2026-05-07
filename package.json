@@ -1,0 +1,86 @@
+{
+  "name": "link-eats-printer",
+  "version": "1.0.0",
+  "description": "Electron app for automatic order printing via WebSocket",
+  "main": "main.js",
+  "scripts": {
+    "start": "npx electron . --max-old-space-size=512",
+    "dev": "npx electron . --dev",
+    "build": "electron-builder",
+    "dist": "electron-builder --publish=never",
+    "build:win": "electron-builder --win nsis --publish=never",
+    "build:win:portable": "electron-builder --win portable --publish=never",
+    "build:win:all": "npm run build:printer:win && npm run build:win:portable && npm run build:win",
+    "build:printer:win": "scripts\\\\build-printer-win.bat",
+    "pack:win:x64": "electron-packager . \"Link Eats Printer\" --platform=win32 --arch=x64 --out=dist-pack --overwrite --no-version",
+    "pack:win:arm64": "electron-packager . \"Link Eats Printer\" --platform=win32 --arch=arm64 --out=dist-pack --overwrite",
+    "pack:win:ia32": "electron-packager . \"Link Eats Printer\" --platform=win32 --arch=ia32 --out=dist-pack --overwrite"
+  },
+  "keywords": [
+    "electron",
+    "printer",
+    "websocket",
+    "orders"
+  ],
+  "author": "Link Eats",
+  "license": "MIT",
+  "devDependencies": {
+"electron": "22.3.27",
+    "electron-builder": "^24.9.1",
+    "electron-winstaller": "^5.4.0",
+    "electron-packager": "^17.1.2"
+  },
+  "dependencies": {
+    "electron-store": "^8.1.0",
+    "node-fetch": "^2.7.0",
+    "ws": "^8.16.0"
+  },
+  "build": {
+    "appId": "com.linkeats.printer",
+    "productName": "Link Eats Printer",
+    "directories": {
+      "output": "dist"
+    },
+    "extraResources": [
+      "printer.py",
+      {
+        "from": "bin",
+        "to": "bin",
+        "filter": [
+          "printer-win.exe"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": "always",
+      "shortcutName": "Link Eats Printer",
+      "runAfterFinish": true
+    },
+    "files": [
+      "main.js",
+      "renderer.js",
+      "index.html",
+      "styles.css",
+      "preload.js",
+      "printer.py"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

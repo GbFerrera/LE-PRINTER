@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Link Eats - Impressora de Pedidos</title>
+    <link rel="icon" type="image/x-icon" href="public/favicon.ico">
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.lordicon.com/lordicon.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Login Section -->
+        <div id="login-section" class="section">
+            <div class="login-card">
+                <div class="logo-container">
+                    <img src="public/logo.png" alt="Link Eats" class="logo">
+                </div>
+                <h1>Link Eats</h1>
+                <h2>Impressora de Pedidos</h2>
+
+                <div class="form-group">
+                    <label for="kds-token-login">Token KDS:</label>
+                    <textarea id="kds-token-login" rows="4" placeholder="Cole aqui o token KDS gerado no painel..."></textarea>
+                    <small style="color:#888;display:block;margin-top:4px;">Painel &gt; Configurações &gt; Impressora</small>
+                </div>
+
+                <button id="connect-token-login-btn" class="btn-primary" style="width:100%">Conectar</button>
+
+                <div id="login-status" class="status-message"></div>
+            </div>
+        </div>
+
+        <!-- Main App Section -->
+        <div id="app-section" class="section hidden">
+            <header class="app-header">
+                <h1>Link Eats - Impressora</h1>
+                <div class="header-controls">
+                    <div class="connection-status">
+                        <span id="connection-indicator" class="status-dot"></span>
+                        <span id="connection-text">Desconectado</span>
+                    </div>
+                    <button id="logout-btn" class="btn-secondary">Sair</button>
+                </div>
+            </header>
+
+            <div class="main-content">
+                <div class="app-content">
+                    <!-- Settings Panel -->
+                    <div class="settings-panel">
+                        <h3>Configurações</h3>
+
+                        <div class="setting-item">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="auto-print-toggle">
+                                <span class="slider"></span>
+                            </label>
+                            <span>Impressão Automática</span>
+                        </div>
+
+                        <button id="test-printer-btn" class="btn-secondary">Testar Impressora</button>
+
+                        <h4>Impressora</h4>
+                        <div class="form-group">
+                            <select id="printer-select" style="width:100%;padding:8px;border:2px solid #e1e5e9;border-radius:8px;font-size:14px;">
+                                <option value="">-- Padrão do sistema --</option>
+                            </select>
+                        </div>
+                        <button id="refresh-printers-btn" class="btn-secondary" style="width:100%;margin-bottom:10px;">Atualizar Impressoras</button>
+
+                        <hr class="settings-divider">
+
+                        <h4>Token KDS</h4>
+                        <div class="kds-status" id="kds-status"></div>
+                        <button id="disconnect-token-btn" class="btn-secondary" style="width:100%">Desconectar / Trocar Token</button>
+                    </div>
+                    
+                    <!-- Orders Panel -->
+                    <div class="orders-panel">
+                        <div class="orders-header">
+                            <h3>Pedidos Pendentes</h3>
+                            <span id="pending-count" class="count-badge">0</span>
+                        </div>
+                        
+                        <div id="orders-list" class="orders-list">
+                            <div class="no-orders">
+                                <p>Nenhum pedido pendente</p>
+                            </div>
+                        </div>
+                        
+                        <div class="orders-footer">
+                            <p id="status-text">Aguardando pedidos...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+        
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div id="status-message">Aguardando pedidos...</div>
+            <div id="last-activity"></div>
+        </div>
+        </div>
+    </div>
+
+    <!-- Order Modal -->
+    <div id="order-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Detalhes do Pedido</h3>
+                <button id="close-modal" class="close-btn">&times;</button>
+            </div>
+            <div id="modal-body" class="modal-body">
+                <!-- Order details will be populated here -->
+            </div>
+            <div class="modal-footer">
+                <button id="print-modal-order" class="btn-primary">Imprimir</button>
+                <button id="dismiss-order" class="btn-secondary">Dispensar</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="renderer.js"></script>
+</body>
+</html>
