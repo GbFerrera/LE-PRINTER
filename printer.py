@@ -56,30 +56,40 @@ def encode_para_impressora(texto):
     return normalizado.encode('ascii', errors='replace')
 
 def montar_dados_impressao(texto, font_size='normal'):
-    # ESC/POS:
-    # ESC @      -> init printer
-    # ESC M n    -> font family (0 = Font A, 1 = Font B/menor)
-    # ESC 3 n    -> line spacing
-    # GS ! n     -> select character size
+    """
+    Monta dados para impressão térmica com comandos ESC/POS
+    font_size: 'compact', 'normal', 'medium', 'large'
+    """
     dados_texto = encode_para_impressora(texto)
+    
+    # Inicializa impressora
     inicio = b'\x1b@'
+    
+    # Configura fonte e espaçamento conforme tamanho
     if font_size == 'large':
-        inicio += b'\x1bM\x00'  # Font A
-        inicio += b'\x1b3\x20'  # line spacing 32
-        inicio += b'\x1d!\x11'
+        # Fonte grande (altura dupla + espaçamento máximo)
+        inicio += b'\x1bM\x00'      # Font A
+        inicio += b'\x1b3\x25'      # Line spacing 37
+        inicio += b'\x1d!\x10'      # Double height only
     elif font_size == 'medium':
-        inicio += b'\x1bM\x00'  # Font A
-        inicio += b'\x1b3\x18'  # line spacing 24
-        inicio += b'\x1d!\x10'  # fonte um pouco maior (altura dupla), sem bold
+        # Fonte média (tamanho aumentado + bom espaçamento)
+        inicio += b'\x1bM\x00'      # Font A
+        inicio += b'\x1b3\x20'      # Line spacing 32
+        inicio += b'\x1d!\x00'      # Normal size
     elif font_size == 'compact':
-        inicio += b'\x1bM\x01'  # Font B (menor)
-        inicio += b'\x1b3\x14'  # line spacing 20
-        inicio += b'\x1d!\x00'  # normal size
-    else:
-        inicio += b'\x1bM\x00'
-        inicio += b'\x1b3\x18'
-        inicio += b'\x1d!\x00'
-    fim = b'\x1d!\x00\x1bE\x00\x1bM\x00\x1b2'  # reset size/font/line spacing default
+        # Fonte compacta (menor com bom espaçamento)
+        inicio += b'\x1bM\x01'      # Font B (mais condensada)
+        inicio += b'\x1b3\x18'      # Line spacing 24
+        inicio += b'\x1d!\x00'      # Normal size
+    else:  # normal
+        # Fonte normal padrão (tamanho bom com ótimo espaçamento)
+        inicio += b'\x1bM\x00'      # Font A
+        inicio += b'\x1b3\x20'      # Line spacing 32
+        inicio += b'\x1d!\x00'      # Normal size
+    
+    # Reset para configuração padrão no final
+    fim = b'\x1d!\x00\x1bE\x00\x1bM\x00\x1b2'
+    
     return inicio + dados_texto + fim
 
 # Função para imprimir um texto na impressora selecionada (modo RAW)
