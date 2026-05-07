@@ -67,12 +67,12 @@ def montar_dados_impressao(texto, font_size='normal'):
     
     # Configura fonte e espaçamento conforme tamanho
     if font_size == 'large':
-        # Fonte grande (altura dupla + espaçamento máximo)
+        # Fonte grande (altura dupla + espaçamento generoso)
         inicio += b'\x1bM\x00'      # Font A
         inicio += b'\x1b3\x25'      # Line spacing 37
         inicio += b'\x1d!\x10'      # Double height only
     elif font_size == 'medium':
-        # Fonte média (tamanho aumentado + bom espaçamento)
+        # Fonte média (tamanho médio + espaçamento generoso)
         inicio += b'\x1bM\x00'      # Font A
         inicio += b'\x1b3\x20'      # Line spacing 32
         inicio += b'\x1d!\x00'      # Normal size
@@ -82,7 +82,7 @@ def montar_dados_impressao(texto, font_size='normal'):
         inicio += b'\x1b3\x18'      # Line spacing 24
         inicio += b'\x1d!\x00'      # Normal size
     else:  # normal
-        # Fonte normal padrão (tamanho bom com ótimo espaçamento)
+        # Fonte normal padrão (tamanho médio com espaçamento generoso)
         inicio += b'\x1bM\x00'      # Font A
         inicio += b'\x1b3\x20'      # Line spacing 32
         inicio += b'\x1d!\x00'      # Normal size
