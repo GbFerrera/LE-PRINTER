@@ -15,6 +15,7 @@ const autoPrintToggle = document.getElementById('auto-print-toggle');
 const testPrinterBtn = document.getElementById('test-printer-btn');
 const ordersList = document.getElementById('orders-list');
 const pendingCount = document.getElementById('pending-count');
+const clearAllOrdersBtn = document.getElementById('clear-all-orders-btn');
 const statusMessage = document.getElementById('status-message');
 const lastActivity = document.getElementById('last-activity');
 const orderModal = document.getElementById('order-modal');
@@ -136,6 +137,9 @@ function setupEventListeners() {
 
     // Test printer
     testPrinterBtn.addEventListener('click', handleTestPrinter);
+    if (clearAllOrdersBtn) {
+        clearAllOrdersBtn.addEventListener('click', handleClearAllOrders);
+    }
 
     // Modal
     closeModal.addEventListener('click', closeOrderModal);
@@ -302,6 +306,9 @@ function updateConnectionStatus(connected) {
 // Update orders list
 function updateOrdersList() {
     pendingCount.textContent = pendingOrders.length;
+    if (clearAllOrdersBtn) {
+        clearAllOrdersBtn.classList.toggle('hidden', pendingOrders.length === 0);
+    }
     
     if (pendingOrders.length === 0) {
         ordersList.innerHTML = '<div class="no-orders"><p>Nenhum pedido pendente</p></div>';
@@ -537,6 +544,15 @@ function dismissOrderById(orderId) {
     pendingOrders = pendingOrders.filter(order => order.id != orderId);
     updateOrdersList();
     showStatus(`Pedido #${orderId} dispensado`, 'info');
+}
+
+function handleClearAllOrders() {
+    if (pendingOrders.length === 0) return;
+    const shouldClear = window.confirm('Deseja limpar todos os pedidos pendentes?');
+    if (!shouldClear) return;
+    pendingOrders = [];
+    updateOrdersList();
+    showStatus('Todos os pedidos pendentes foram removidos da lista', 'info');
 }
 
 // Show login status

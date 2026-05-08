@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, dialog, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const Store = require('electron-store');
@@ -14,9 +14,27 @@ app.commandLine.appendSwitch('disable-dev-shm-usage');
 app.commandLine.appendSwitch('disable-web-security');
 app.commandLine.appendSwitch('allow-running-insecure-content');
 
-// Definir diretórios de cache para local com permissão
-app.setPath('userData', path.join(__dirname, 'user-data'));
-app.setPath('cache', path.join(__dirname, 'cache'));
+// Em build empacotado, __dirname aponta para app.asar (não gravável no Windows).
+// Então só usamos pasta local no modo dev; em produção usamos os paths padrão do sistema.
+if (!app.isPackaged) {
+  app.setPath('userData', path.join(__dirname, 'user-data'));
+  app.setPath('cache', path.join(__dirname, 'cache'));
+} else if (process.platform === 'win32') {
+  // Evita problemas de permissão em Roaming com electron-store (config.json.tmp)
+  const localAppData = process.env.LOCALAPPDATA;
+  if (localAppData) {
+    const userDataPath = path.join(localAppData, 'link-eats-printer');
+    const cachePath = path.join(userDataPath, 'Cache');
+    try {
+      fs.mkdirSync(userDataPath, { recursive: true });
+      fs.mkdirSync(cachePath, { recursive: true });
+      app.setPath('userData', userDataPath);
+      app.setPath('cache', cachePath);
+    } catch (error) {
+      console.error('Failed to prepare Windows data directories:', error);
+    }
+  }
+}
 
 // Initialize store for persistent settings
 const store = new Store();
@@ -33,6 +51,20 @@ let reconnectTimer = null;
 let isConnecting = false;
 let selectedPrinter = null;
 const recentlyPrinted = new Set(); // deduplication guard
+
+function resolveAppIconPath() {
+  const candidates = [
+    path.join(__dirname, 'public', 'icon.png'),
+    path.join(process.resourcesPath || '', 'public', 'icon.png'),
+  ];
+  return candidates.find((candidate) => candidate && fs.existsSync(candidate)) || null;
+}
+
+// Evita múltiplas instâncias concorrendo pelo mesmo arquivo de config (electron-store)
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
 
 // Backend configuration
 const BACKEND_URL = 'https://api.linkeats.com.br';
@@ -117,8 +149,60 @@ function formatDisplayNumber(id, number) {
   return `#${String(numericHash).slice(0, 4).padStart(4, '0')}`;
 }
 
+function getComplementName(complement) {
+  return (
+    complement?.complement?.name ||
+    complement?.Complement?.name ||
+    complement?.name ||
+    ''
+  );
+}
+
+function getComplementPrice(complement) {
+  const raw = complement?.price;
+  const parsed = raw == null ? 0 : parseFloat(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getComplementQuantity(complement) {
+  const candidates = [
+    complement?.quantity,
+    complement?.qtd,
+    complement?.amount,
+    complement?.default_qtd,
+  ];
+  for (const value of candidates) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n > 0) return Math.trunc(n);
+  }
+  return 1;
+}
+
+function aggregateComplements(complements) {
+  const grouped = new Map();
+
+  (complements || []).forEach((complement) => {
+    const name = getComplementName(complement);
+    if (!name) return;
+
+    const unitPrice = getComplementPrice(complement);
+    const qty = getComplementQuantity(complement);
+    const key = `${name}::${unitPrice.toFixed(2)}`;
+    const existing = grouped.get(key);
+
+    if (existing) {
+      existing.quantity += qty;
+    } else {
+      grouped.set(key, { name, unitPrice, quantity: qty });
+    }
+  });
+
+  return Array.from(grouped.values());
+}
+
 function createWindow() {
   console.log('Creating window...');
+  const iconPath = resolveAppIconPath();
   
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -130,7 +214,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js')
     },
     title: 'Link Eats - Impressora de Pedidos',
-    icon: path.join(__dirname, 'public', 'icon.png')
+    icon: iconPath || undefined
   });
 
   console.log('Window created, loading HTML...');
@@ -323,14 +407,13 @@ function formatOrderText(order) {
         // Calculate total complement price for this item
         let complementTotal = 0;
         if (item.complements && item.complements.length > 0) {
-          item.complements.forEach(c => {
-            const cName = c.complement?.name || c.Complement?.name || c.name || '';
-            if (cName) {
-              const cPrice = c.price ? parseFloat(c.price) : 0;
-              complementTotal += cPrice;
-              const cPriceText = cPrice !== 0 ? ` (R$ ${cPrice.toFixed(2)})` : '';
-              text += `   + ${cName}${cPriceText}\n`;
-            }
+          const aggregatedComplements = aggregateComplements(item.complements);
+          aggregatedComplements.forEach((c) => {
+            const linePrice = c.unitPrice * c.quantity;
+            complementTotal += linePrice;
+            const qtyPrefix = c.quantity > 1 ? `${c.quantity}x ` : '';
+            const cPriceText = linePrice !== 0 ? ` (R$ ${linePrice.toFixed(2)})` : '';
+            text += `   + ${qtyPrefix}${c.name}${cPriceText}\n`;
           });
         }
         
@@ -424,14 +507,13 @@ function formatTabText(tabData) {
       }
 
       let complementTotal = 0;
-      (item.complements || []).forEach((c) => {
-        const cName = c.complement?.name || c.name || '';
-        if (cName) {
-          const cPrice = c.price ? parseFloat(c.price) : 0;
-          complementTotal += cPrice;
-          const cPriceText = cPrice !== 0 ? ` (R$ ${cPrice.toFixed(2)})` : '';
-          text += `   + ${cName}${cPriceText}\n`;
-        }
+      const aggregatedComplements = aggregateComplements(item.complements || []);
+      aggregatedComplements.forEach((c) => {
+        const linePrice = c.unitPrice * c.quantity;
+        complementTotal += linePrice;
+        const qtyPrefix = c.quantity > 1 ? `${c.quantity}x ` : '';
+        const cPriceText = linePrice !== 0 ? ` (R$ ${linePrice.toFixed(2)})` : '';
+        text += `   + ${qtyPrefix}${c.name}${cPriceText}\n`;
       });
 
       if (item.price) {
@@ -815,6 +897,13 @@ ipcMain.handle('test-printer', async () => {
 // App events
 app.whenReady().then(() => {
   console.log('App is ready, creating window...');
+  const iconPath = resolveAppIconPath();
+  if (process.platform === 'darwin' && app.dock && iconPath) {
+    const dockIcon = nativeImage.createFromPath(iconPath);
+    if (!dockIcon.isEmpty()) {
+      app.dock.setIcon(dockIcon);
+    }
+  }
   createWindow();
   
   // Try to initialize printer, but don't block the app if it fails
@@ -827,6 +916,13 @@ app.whenReady().then(() => {
       createWindow();
     }
   });
+});
+
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
 });
 
 app.on('window-all-closed', () => {

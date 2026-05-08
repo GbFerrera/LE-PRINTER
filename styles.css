@@ -394,6 +394,19 @@ input:checked + .slider:before {
     font-weight: 700;
 }
 
+.orders-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.clear-all-btn {
+    padding: 8px 12px;
+    font-size: 12px;
+    border-radius: 8px;
+    white-space: nowrap;
+}
+
 .count-badge {
     background: #FB6900;
     color: white;

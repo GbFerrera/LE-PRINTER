@@ -51,26 +51,14 @@
         ]
       }
     ],
-    "win": {
-      "target": [
-        "nsis"
-      ]
-    },
-    "nsis": {
-      "oneClick": true,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": false,
-      "createDesktopShortcut": "always",
-      "shortcutName": "Link Eats Printer",
-      "runAfterFinish": true
-    },
     "files": [
       "main.js",
       "renderer.js",
       "index.html",
       "styles.css",
       "preload.js",
-      "printer.py"
+      "printer.py",
+      "public/**/*"
     ],
     "win": {
       "target": "nsis",
