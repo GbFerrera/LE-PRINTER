@@ -198,28 +198,27 @@ button:disabled {
     border: 1px solid #f5c6cb;
 }
 
-/* App Section */
-.app-section {
-    background: #f8f9fa;
+/* Main App Section */
+#app-section {
     display: flex;
     flex-direction: column;
+    background: white;
     height: 100vh;
     width: 100vw;
     position: fixed;
     top: 0;
     left: 0;
+    z-index: 100;
 }
 
 .app-header {
     background: white;
-    padding: 20px 30px;
+    padding: 15px 25px;
     border-bottom: 1px solid #e9ecef;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     flex-shrink: 0;
-    min-height: 80px;
 }
 
 .app-header h1 {
@@ -369,20 +368,24 @@ input:checked + .slider:before {
 
 .orders-panel {
     flex: 1;
-    background: white;
-    border-radius: 0;
-    box-shadow: none;
     display: flex;
     flex-direction: column;
+    background: white;
+    padding: 0;
+    border-radius: 0;
+    box-shadow: none;
     overflow: hidden;
     height: 100%;
 }
 
 .orders-header {
-    padding: 25px 25px 0;
+    padding: 25px;
+    border-bottom: 1px solid #e9ecef;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    background: white;
+    flex-shrink: 0;
 }
 
 .orders-header h3 {
@@ -402,15 +405,25 @@ input:checked + .slider:before {
 
 .orders-list {
     flex: 1;
-    padding: 25px;
     overflow-y: auto;
-    min-height: 0;
+    padding: 25px;
+    background: #f8f9fa;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 20px;
+    align-content: start;
 }
 
 .no-orders {
-    text-align: center;
-    color: #6c757d;
-    padding: 40px 20px;
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 200px;
+    background: white;
+    border-radius: 12px;
+    border: 2px dashed #e9ecef;
+    color: #999;
 }
 
 .order-item {
@@ -562,13 +575,11 @@ input:checked + .slider:before {
 
 .orders-footer {
     padding: 15px 25px;
+    background: white;
     border-top: 1px solid #e9ecef;
-    background: #f8f9fa;
-    text-align: center;
-    color: #6c757d;
+    color: #666;
     font-size: 14px;
     flex-shrink: 0;
-    margin-top: auto;
 }
 
 .order-detail-section {

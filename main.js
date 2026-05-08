@@ -35,7 +35,7 @@ let selectedPrinter = null;
 const recentlyPrinted = new Set(); // deduplication guard
 
 // Backend configuration
-const BACKEND_URL = 'http://192.168.1.7:3333';
+const BACKEND_URL = 'https://api.linkeats.com.br';
 const backendUrl = new URL(BACKEND_URL);
 const wsProtocol = backendUrl.protocol === 'https:' ? 'wss:' : 'ws:';
 const WS_URL = `${wsProtocol}//${backendUrl.host}/ws`;
@@ -121,15 +121,16 @@ function createWindow() {
   console.log('Creating window...');
   
   mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
-    show: false, // Manter oculta inicialmente
+    width: 1200,
+    height: 800,
+    show: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js')
     },
-    title: 'Link Eats - Impressora de Pedidos'
+    title: 'Link Eats - Impressora de Pedidos',
+    icon: path.join(__dirname, 'public', 'icon.png')
   });
 
   console.log('Window created, loading HTML...');
@@ -144,6 +145,7 @@ function createWindow() {
   // Eventos da janela
   mainWindow.webContents.on('did-finish-load', () => {
     console.log('Page loaded successfully');
+    mainWindow.maximize();
     mainWindow.show(); // Mostrar janela após carregar
   });
 
@@ -322,11 +324,11 @@ function formatOrderText(order) {
         let complementTotal = 0;
         if (item.complements && item.complements.length > 0) {
           item.complements.forEach(c => {
-            const cName = c.complement?.name || c.Complement?.name || '';
+            const cName = c.complement?.name || c.Complement?.name || c.name || '';
             if (cName) {
               const cPrice = c.price ? parseFloat(c.price) : 0;
               complementTotal += cPrice;
-              const cPriceText = cPrice > 0 ? ` +R$ ${cPrice.toFixed(2)}` : '';
+              const cPriceText = cPrice !== 0 ? ` (R$ ${cPrice.toFixed(2)})` : '';
               text += `   + ${cName}${cPriceText}\n`;
             }
           });
@@ -375,7 +377,7 @@ function formatOrderText(order) {
   
   text += '\n';
   text += '   Obrigado pela preferencia!\n';
-  text += '      www.linkeats.com\n';
+  text += '      www.linkeats.com.br\n';
   text += '\n';
   text += '\n';
   text += '\n';
@@ -423,11 +425,11 @@ function formatTabText(tabData) {
 
       let complementTotal = 0;
       (item.complements || []).forEach((c) => {
-        const cName = c.complement?.name || '';
+        const cName = c.complement?.name || c.name || '';
         if (cName) {
           const cPrice = c.price ? parseFloat(c.price) : 0;
           complementTotal += cPrice;
-          const cPriceText = cPrice > 0 ? ` +R$ ${cPrice.toFixed(2)}` : '';
+          const cPriceText = cPrice !== 0 ? ` (R$ ${cPrice.toFixed(2)})` : '';
           text += `   + ${cName}${cPriceText}\n`;
         }
       });
@@ -448,7 +450,7 @@ function formatTabText(tabData) {
   text += `TOTAL COMANDA: R$ ${parseFloat(tabData?.total || 0).toFixed(2)}\n`;
   text += '\n';
   text += '   Obrigado pela preferencia!\n';
-  text += '      www.linkeats.com\n';
+  text += '      www.linkeats.com.br\n';
   text += '\n';
   text += '\n';
   text += '\n';
