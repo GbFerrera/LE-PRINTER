@@ -393,7 +393,9 @@ function formatOrderText(order) {
   
   if (order.items && order.items.length > 0) {
     order.items.forEach((item, index) => {
-      text += `${index + 1}. ${item.quantity}x ${item.product?.name || item.name || 'Item'}\n`;
+      // ESC/POS: \x1bE\x01 ativa negrito, \x1bE\x00 desativa
+      const itemName = item.product?.name || item.name || 'Item';
+      text += `${index + 1}. \x1bE\x01${item.quantity}x ${itemName}\x1bE\x00\n`;
       
       // Show item observations right after item name
       const itemObs = item.observations || item.observation || item.notes || item.obs || '';
@@ -501,7 +503,8 @@ function formatTabText(tabData) {
     text += '--------------------------------\n';
 
     (order.items || []).forEach((item, idx) => {
-      text += `${idx + 1}. ${item.quantity}x ${item.product?.name || 'Item'}\n`;
+      const itemName = item.product?.name || 'Item';
+      text += `${idx + 1}. \x1bE\x01${item.quantity}x ${itemName}\x1bE\x00\n`;
       if (item.price) {
         text += `   Valor unit: R$ ${parseFloat(item.price).toFixed(2)}\n`;
       }

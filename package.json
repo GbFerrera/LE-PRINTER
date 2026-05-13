@@ -42,7 +42,6 @@
       "output": "dist"
     },
     "extraResources": [
-      "printer.py",
       {
         "from": "bin",
         "to": "bin",
@@ -57,8 +56,12 @@
       "index.html",
       "styles.css",
       "preload.js",
-      "printer.py",
-      "public/**/*"
+      "public/**/*",
+      "!printer.py",
+      "!**/*.pyc",
+      "!venv/**/*",
+      "!user-data/**/*",
+      "!scripts/**/*"
     ],
     "win": {
       "target": "nsis",
