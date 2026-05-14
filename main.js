@@ -43,9 +43,10 @@ let mainWindow;
 let ws = null;
 let printerProcess = null;
 let isAutoPrintEnabled = store.get('autoPrintEnabled', false);
-let kdsToken = null;
-let companyId = null;
-let companyName = null;
+let deviceToken = store.get('deviceToken', null);
+let deviceId = store.get('deviceId', null);
+let companyId = store.get('companyId', null);
+let companyName = store.get('companyName', null);
 let printerReady = false;
 let reconnectTimer = null;
 let isConnecting = false;
@@ -68,21 +69,10 @@ if (!gotSingleInstanceLock) {
 }
 
 // Backend configuration
-const BACKEND_URL = 'https://api.linkeats.com.br';
+const BACKEND_URL = 'http://192.168.0.100:3333';
 const backendUrl = new URL(BACKEND_URL);
 const wsProtocol = backendUrl.protocol === 'https:' ? 'wss:' : 'ws:';
 const WS_URL = `${wsProtocol}//${backendUrl.host}/ws`;
-
-// Decode JWT payload (no verification needed - backend validates on connect)
-function decodeJwtPayload(token) {
-  try {
-    const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-    const json = Buffer.from(base64, 'base64').toString('utf8');
-    return JSON.parse(json);
-  } catch (e) {
-    return null;
-  }
-}
 
 // Handle print-order event - payload already contains full order data from backend
 async function handlePrintOrderEvent(payload) {
@@ -586,11 +576,31 @@ async function printOrder(order) {
   }
 }
 
-// WebSocket connection with join-printer
+async function loadCompanyName(companyIdToLoad) {
+  if (!companyIdToLoad) return null
+  try {
+    const res = await fetch(`${BACKEND_URL}/public/menu/company`, {
+      headers: { company_id: companyIdToLoad }
+    })
+    if (res.ok) {
+      const data = await res.json()
+      const name = data.display_name || data.name || null
+      if (name) {
+        companyName = name
+        store.set('companyName', name)
+      }
+      return name
+    }
+  } catch {}
+  companyName = store.get('companyName', null)
+  return companyName
+}
+
+// WebSocket connection (auth-printer)
 function connectWebSocket() {
   if (isConnecting) return;
-  if (!kdsToken || !companyId) {
-    console.log('⚠️ Cannot connect: missing token or companyId');
+  if (!deviceToken) {
+    console.log('⚠️ Cannot connect: missing device token');
     return;
   }
 
@@ -613,19 +623,14 @@ function connectWebSocket() {
     isConnecting = false;
     console.log('✅ WebSocket connected');
 
-    // Join the printer room - this is what receives new-order and print-order events
     try {
       socket.send(JSON.stringify({
-        type: 'join-printer',
-        payload: { companyId }
+        type: 'auth-printer',
+        payload: { deviceToken }
       }));
-      console.log(`🖨️ Joining printer room for company: ${companyId}`);
+      console.log('🖨️ Authenticating printer device...');
     } catch (e) {
-      console.error('❌ Failed to send join-printer:', e.message);
-    }
-
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('websocket-status', { connected: true });
+      console.error('❌ Failed to send auth-printer:', e.message);
     }
   });
 
@@ -634,11 +639,30 @@ function connectWebSocket() {
       const data = JSON.parse(message.toString());
       console.log('📨 WS message:', data.type);
 
-      if (data.type === 'joined-printer') {
-        console.log('✅ Joined printer room for company:', data.payload.companyId);
+      if (data.type === 'printer-authenticated') {
+        companyId = data.payload?.companyId || null;
+        deviceId = data.payload?.deviceId || deviceId;
+        store.set('deviceToken', deviceToken);
+        if (deviceId) store.set('deviceId', deviceId);
+        if (companyId) store.set('companyId', companyId);
+        loadCompanyName(companyId);
+        console.log('✅ Printer authenticated. Company:', companyId);
         if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('websocket-status', { connected: true });
+          mainWindow.webContents.send('websocket-status', { connected: true, companyId, deviceId });
         }
+      } else if (data.type === 'printer-auth-failed') {
+        console.log('❌ Printer auth failed:', data.payload?.message);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('websocket-error', data.payload?.message || 'Falha ao autenticar');
+          mainWindow.webContents.send('websocket-status', { connected: false });
+        }
+        deviceToken = null;
+        deviceId = null;
+        companyId = null;
+        store.delete('deviceToken');
+        store.delete('deviceId');
+        store.delete('companyId');
+        try { socket.terminate(); } catch {}
       } else if (data.type === 'new-order') {
         console.log('🔔 New order received:', data.payload?.id);
         // Always show in UI list - print-order event handles actual printing
@@ -714,7 +738,7 @@ function connectWebSocket() {
       mainWindow.webContents.send('websocket-status', { connected: false });
     }
     // Auto-reconnect after 5 seconds if we still have a token
-    if (kdsToken && companyId) {
+    if (deviceToken) {
       console.log('🔄 Reconnecting in 5s...');
       reconnectTimer = setTimeout(() => connectWebSocket(), 5000);
     }
@@ -762,78 +786,78 @@ ipcMain.handle('get-stored-credentials', () => {
   };
 });
 
-// Connect using KDS token (generated via /auth/kds-token in the dashboard)
-ipcMain.handle('connect-token', async (event, token) => {
-  try {
-    console.log('🔑 Attempting to connect with token:', token.substring(0, 20) + '...');
-    const payload = decodeJwtPayload(token);
-    console.log('🔍 Decoded payload:', payload);
-    
-    if (!payload) {
-      console.log('❌ Token decode failed');
-      return { success: false, error: 'Token inválido' };
-    }
-    if (!payload.company_id) {
-      console.log('❌ Missing company_id');
-      return { success: false, error: 'Token não contém company_id. Use o token KDS gerado no painel.' };
-    }
-    if (payload.device !== 'kds') {
-      console.log('❌ Wrong device type:', payload.device);
-      return { success: false, error: 'Token inválido. Use o token KDS gerado no painel (Configurações > Impressora).' };
-    }
-
-    // Check expiry
-    if (payload.exp && payload.exp * 1000 < Date.now()) {
-      return { success: false, error: 'Token expirado. Gere um novo token no painel.' };
-    }
-
-    kdsToken = token;
-    companyId = payload.company_id;
-
-    // Persist token
-    store.set('kdsToken', token);
-    store.set('companyId', companyId);
-
-    // Fetch company name for receipt header
-    try {
-      const res = await fetch(`${BACKEND_URL}/public/menu/company`, {
-        headers: { 'company_id': companyId }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        companyName = data.display_name || data.name || null;
-        store.set('companyName', companyName);
-      }
-    } catch (e) {
-      companyName = store.get('companyName', null);
-    }
-
-    // Connect WebSocket
-    connectWebSocket();
-
-    return { success: true, companyId };
-  } catch (error) {
-    console.error('connect-token error:', error);
-    return { success: false, error: error.message || 'Erro ao conectar' };
-  }
+ipcMain.handle('get-stored-device-info', () => {
+  return {
+    paired: Boolean(store.get('deviceToken', null)),
+    deviceId: store.get('deviceId', null),
+    companyId: store.get('companyId', null),
+    companyName: store.get('companyName', null)
+  };
 });
 
-ipcMain.handle('disconnect-token', () => {
-  kdsToken = null;
-  companyId = null;
-  store.delete('kdsToken');
-  store.delete('companyId');
-  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-  if (ws) { try { ws.terminate(); } catch {} ws = null; }
+ipcMain.handle('connect-stored-device', () => {
+  deviceToken = store.get('deviceToken', null);
+  deviceId = store.get('deviceId', null);
+  companyId = store.get('companyId', null);
+  companyName = store.get('companyName', null);
+
+  if (!deviceToken) {
+    return { success: false, error: 'Nenhuma impressora vinculada' };
+  }
+
+  connectWebSocket();
   return { success: true };
 });
 
-ipcMain.handle('get-stored-token', () => {
-  companyName = store.get('companyName', null);
-  return {
-    token: store.get('kdsToken', ''),
-    companyId: store.get('companyId', '')
-  };
+ipcMain.handle('claim-pair-code', async (_event, { code, deviceName }) => {
+  try {
+    const normalizedCode = String(code || '').trim();
+    if (!normalizedCode) {
+      return { success: false, error: 'Código inválido' };
+    }
+
+    const response = await fetch(`${BACKEND_URL}/printer/pair/claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: normalizedCode, deviceName })
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return { success: false, error: data?.message || 'Código inválido ou expirado' };
+    }
+
+    deviceToken = data.deviceToken;
+    deviceId = data.deviceId;
+    companyId = data.companyId;
+
+    store.set('deviceToken', deviceToken);
+    store.set('deviceId', deviceId);
+    store.set('companyId', companyId);
+
+    loadCompanyName(companyId);
+    connectWebSocket();
+
+    return { success: true, companyId, deviceId };
+  } catch (error) {
+    return { success: false, error: error.message || 'Erro ao vincular' };
+  }
+});
+
+ipcMain.handle('disconnect-device', () => {
+  deviceToken = null;
+  deviceId = null;
+  companyId = null;
+  companyName = null;
+
+  store.delete('deviceToken');
+  store.delete('deviceId');
+  store.delete('companyId');
+  store.delete('companyName');
+
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  if (ws) { try { ws.terminate(); } catch {} ws = null; }
+  return { success: true };
 });
 
 ipcMain.handle('toggle-auto-print', (event, enabled) => {

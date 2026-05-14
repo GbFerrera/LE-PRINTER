@@ -2,13 +2,12 @@
 const loginSection = document.getElementById('login-section');
 const appSection = document.getElementById('app-section');
 const loginStatus = document.getElementById('login-status');
-const kdsTokenLoginInput = document.getElementById('kds-token-login');
-const connectTokenLoginBtn = document.getElementById('connect-token-login-btn');
-const disconnectTokenBtn = document.getElementById('disconnect-token-btn');
-const kdsStatus = document.getElementById('kds-status');
+const pairCodeLoginInput = document.getElementById('pair-code-login');
+const deviceNameLoginInput = document.getElementById('device-name-login');
+const pairLoginBtn = document.getElementById('pair-login-btn');
+const reconnectDeviceBtn = document.getElementById('reconnect-device-btn');
 const printerSelect = document.getElementById('printer-select');
 const refreshPrintersBtn = document.getElementById('refresh-printers-btn');
-const logoutBtn = document.getElementById('logout-btn');
 const connectionIndicator = document.getElementById('connection-indicator');
 const connectionText = document.getElementById('connection-text');
 const autoPrintToggle = document.getElementById('auto-print-toggle');
@@ -29,6 +28,25 @@ const dismissOrder = document.getElementById('dismiss-order');
 let pendingOrders = [];
 let currentOrder = null;
 let isConnected = false;
+let isPaired = false;
+let manualConnectAttempt = false;
+
+function waitForConnection({ timeoutMs }) {
+    return new Promise((resolve) => {
+        const start = Date.now();
+        const timer = setInterval(() => {
+            if (isConnected) {
+                clearInterval(timer);
+                resolve(true);
+                return;
+            }
+            if (Date.now() - start >= timeoutMs) {
+                clearInterval(timer);
+                resolve(false);
+            }
+        }, 200);
+    });
+}
 
 // Initialize app
 document.addEventListener('DOMContentLoaded', async () => {
@@ -39,17 +57,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupEventListeners();
 });
 
-// Auto-connect with stored token on startup
+// Restore state on startup (no auto-connect)
 async function tryAutoConnect() {
     try {
-        const stored = await window.electronAPI.getStoredToken();
-        if (stored.token) {
-            const result = await window.electronAPI.connectToken(stored.token);
-            if (result.success) {
-                showApp();
-                showKdsStatus('Token conectado. Ouvindo pedidos...', 'success');
-                return;
-            }
+        const info = await window.electronAPI.getStoredDeviceInfo();
+        isPaired = Boolean(info && info.paired);
+        if (isPaired) {
+            showApp();
+            updateConnectionStatus(false);
+            showStatus('Clique em Conectar para reconectar', 'info');
+            return;
         }
     } catch (error) {
         console.error('Auto-connect error:', error);
@@ -123,17 +140,19 @@ function showLoginScreen() {
 
 // Setup event listeners
 function setupEventListeners() {
-    // KDS token connect (login screen)
-    connectTokenLoginBtn.addEventListener('click', handleConnectTokenLogin);
-    kdsTokenLoginInput.addEventListener('keydown', (e) => {
+    // Pairing (login screen)
+    pairLoginBtn.addEventListener('click', handlePairLogin);
+    pairCodeLoginInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            handleConnectTokenLogin();
+            handlePairLogin();
         }
     });
 
-    // Disconnect / change token (settings panel)
-    disconnectTokenBtn.addEventListener('click', handleDisconnect);
+    // Reconnect device (settings panel)
+    if (reconnectDeviceBtn) {
+        reconnectDeviceBtn.addEventListener('click', handleReconnect);
+    }
 
     // Printer selection
     printerSelect.addEventListener('change', async () => {
@@ -150,9 +169,6 @@ function setupEventListeners() {
             showStatus(`Fonte: ${fontSizeSelect.options[fontSizeSelect.selectedIndex].textContent}`, 'success');
         });
     }
-
-    // Logout button (header)
-    logoutBtn.addEventListener('click', handleDisconnect);
 
     // Auto-print toggle
     autoPrintToggle.addEventListener('change', handleAutoPrintToggle);
@@ -182,6 +198,22 @@ function setupEventListeners() {
 
     window.electronAPI.onWebSocketError((event, error) => {
         showStatus(`Erro de conexão: ${error}`, 'error');
+        const message = String(error || '').toLowerCase();
+        if (
+            manualConnectAttempt &&
+            (message.includes('revog') ||
+                message.includes('inválid') ||
+                message.includes('inval') ||
+                message.includes('autentic'))
+        ) {
+            manualConnectAttempt = false;
+            window.electronAPI.disconnectDevice().finally(() => {
+                isPaired = false;
+                updateConnectionStatus(false);
+                showLoginScreen();
+                showLoginStatus('Acesso revogado. Gere um novo QR Code para vincular.', 'error');
+            });
+        }
     });
 
     window.electronAPI.onNewOrder((event, order) => {
@@ -193,51 +225,81 @@ function setupEventListeners() {
     });
 }
 
-// Handle connect KDS token (login screen)
-async function handleConnectTokenLogin() {
-    const token = kdsTokenLoginInput.value.trim();
-    if (!token) {
-        showLoginStatus('Cole o token KDS no campo acima', 'error');
+// Handle pair code claim (login screen)
+async function handlePairLogin() {
+    const code = pairCodeLoginInput.value.trim();
+    const deviceName = deviceNameLoginInput ? deviceNameLoginInput.value.trim() : '';
+    if (!code) {
+        showLoginStatus('Digite o código de vinculação no campo acima', 'error');
         return;
     }
 
-    connectTokenLoginBtn.disabled = true;
-    connectTokenLoginBtn.textContent = 'Conectando...';
+    pairLoginBtn.disabled = true;
+    pairLoginBtn.textContent = 'Vinculando...';
 
     try {
-        const result = await window.electronAPI.connectToken(token);
-        console.log('🔗 Connect result:', result);
+        const result = await window.electronAPI.claimPairCode(code, deviceName);
 
         if (result.success) {
-            console.log('✅ Token connection successful');
-            showLoginStatus('Conectado!', 'success');
+            isPaired = true;
+            showLoginStatus('Vinculado!', 'success');
             setTimeout(() => {
-                console.log('🚀 Showing app...');
                 showApp();
-                showKdsStatus('Token conectado. Ouvindo pedidos...', 'success');
+                showStatus('Conectado. Ouvindo pedidos...', 'success');
             }, 600);
         } else {
-            console.log('❌ Token connection failed:', result.error);
             showLoginStatus(`Erro: ${result.error}`, 'error');
         }
     } catch (error) {
-        console.log('💥 Exception during token connection:', error);
         showLoginStatus(`Erro: ${error.message}`, 'error');
     } finally {
-        connectTokenLoginBtn.disabled = false;
-        connectTokenLoginBtn.textContent = 'Conectar';
+        pairLoginBtn.disabled = false;
+        pairLoginBtn.textContent = 'Vincular e Conectar';
     }
 }
 
-// Handle disconnect / change token
+async function handleReconnect() {
+    try {
+        const info = await window.electronAPI.getStoredDeviceInfo();
+        isPaired = Boolean(info && info.paired);
+        if (!isPaired) {
+            showLoginScreen();
+            showLoginStatus('Gere um QR Code no painel para vincular.', 'info');
+            return;
+        }
+        manualConnectAttempt = true;
+        showStatus('Reconectando...', 'info');
+        const result = await window.electronAPI.connectStoredDevice();
+        if (result && result.success) {
+            const connected = await waitForConnection({ timeoutMs: 6000 });
+            if (connected) {
+                manualConnectAttempt = false;
+                return;
+            }
+        }
+
+        await window.electronAPI.disconnectDevice();
+        manualConnectAttempt = false;
+        isPaired = false;
+        showLoginScreen();
+        showLoginStatus('Não foi possível conectar. Gere um novo QR Code para vincular.', 'error');
+    } catch (error) {
+        manualConnectAttempt = false;
+        showStatus(`Erro ao reconectar: ${error.message}`, 'error');
+    }
+}
+
+// Handle disconnect device
 async function handleDisconnect() {
-    await window.electronAPI.disconnectToken();
+    await window.electronAPI.disconnectDevice();
+    isPaired = false;
     pendingOrders = [];
     updateOrdersList();
     updateConnectionStatus(false);
     showLoginScreen();
-    if (kdsTokenLoginInput) kdsTokenLoginInput.value = '';
-    showLoginStatus('Desconectado. Cole um novo token para continuar.', 'info');
+    if (pairCodeLoginInput) pairCodeLoginInput.value = '';
+    if (deviceNameLoginInput) deviceNameLoginInput.value = '';
+    showLoginStatus('Desvinculado. Gere um novo QR Code no painel para vincular.', 'info');
 }
 
 // Handle auto-print toggle
@@ -317,6 +379,9 @@ function updateConnectionStatus(connected) {
     isConnected = connected;
     connectionIndicator.classList.toggle('connected', connected);
     connectionText.textContent = connected ? 'Conectado' : 'Desconectado';
+    if (reconnectDeviceBtn) {
+        reconnectDeviceBtn.classList.toggle('hidden', connected || !isPaired);
+    }
     
     if (connected) {
         showStatus('Conectado ao WebSocket. Aguardando pedidos...', 'success');
@@ -586,19 +651,6 @@ function showLoginStatus(message, type) {
     setTimeout(() => {
         if (type !== 'success') {
             loginStatus.style.display = 'none';
-        }
-    }, 5000);
-}
-
-// Show KDS token status (inside settings panel)
-function showKdsStatus(message, type) {
-    if (!kdsStatus) return;
-    kdsStatus.textContent = message;
-    kdsStatus.className = `kds-status-msg ${type}`;
-    setTimeout(() => {
-        if (kdsStatus.textContent === message) {
-            kdsStatus.textContent = '';
-            kdsStatus.className = 'kds-status';
         }
     }, 5000);
 }

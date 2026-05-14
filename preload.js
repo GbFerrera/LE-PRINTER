@@ -5,10 +5,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   login: (credentials) => ipcRenderer.invoke('login', credentials),
   getStoredCredentials: () => ipcRenderer.invoke('get-stored-credentials'),
 
-  // KDS Token (configurado dentro do app)
-  connectToken: (token) => ipcRenderer.invoke('connect-token', token),
-  disconnectToken: () => ipcRenderer.invoke('disconnect-token'),
-  getStoredToken: () => ipcRenderer.invoke('get-stored-token'),
+  // Printer pairing (QR/código)
+  claimPairCode: (code, deviceName) => ipcRenderer.invoke('claim-pair-code', { code, deviceName }),
+  connectStoredDevice: () => ipcRenderer.invoke('connect-stored-device'),
+  disconnectDevice: () => ipcRenderer.invoke('disconnect-device'),
+  getStoredDeviceInfo: () => ipcRenderer.invoke('get-stored-device-info'),
 
   // Auto-print settings
   toggleAutoPrint: (enabled) => ipcRenderer.invoke('toggle-auto-print', enabled),

@@ -20,12 +20,17 @@
                 <h2>Impressora de Pedidos</h2>
 
                 <div class="form-group">
-                    <label for="kds-token-login">Token KDS:</label>
-                    <textarea id="kds-token-login" rows="4" placeholder="Cole aqui o token KDS gerado no painel..."></textarea>
+                    <label for="pair-code-login">Código de vinculação:</label>
+                    <input id="pair-code-login" type="text" placeholder="Digite o código exibido no painel..." style="width:100%;padding:10px;border:2px solid #e1e5e9;border-radius:8px;font-size:14px;">
                     <small style="color:#888;display:block;margin-top:4px;">Painel &gt; Configurações &gt; Impressora</small>
                 </div>
 
-                <button id="connect-token-login-btn" class="btn-primary" style="width:100%">Conectar</button>
+                <div class="form-group">
+                    <label for="device-name-login">Nome da impressora (opcional):</label>
+                    <input id="device-name-login" type="text" placeholder="Ex: Caixa 1" style="width:100%;padding:10px;border:2px solid #e1e5e9;border-radius:8px;font-size:14px;">
+                </div>
+
+                <button id="pair-login-btn" class="btn-primary" style="width:100%">Vincular e Conectar</button>
 
                 <div id="login-status" class="status-message"></div>
             </div>
@@ -40,7 +45,6 @@
                         <span id="connection-indicator" class="status-dot"></span>
                         <span id="connection-text">Desconectado</span>
                     </div>
-                    <button id="logout-btn" class="btn-secondary">Sair</button>
                 </div>
             </header>
 
@@ -81,10 +85,7 @@
                         </div>
 
                         <hr class="settings-divider">
-
-                        <h4>Token KDS</h4>
-                        <div class="kds-status" id="kds-status"></div>
-                        <button id="disconnect-token-btn" class="btn-secondary" style="width:100%">Desconectar / Trocar Token</button>
+                        <button id="reconnect-device-btn" class="btn-secondary" style="width:100%">Conectar</button>
                     </div>
                     
                     <!-- Orders Panel -->
