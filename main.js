@@ -355,6 +355,9 @@ function formatOrderText(order) {
   if (order.order_type === 'table' && order.table_name) {
     text += `Mesa: ${order.table_name}\n`;
   }
+  if (order.waiter_name) {
+    text += `Atendente: ${order.waiter_name}\n`;
+  }
   text += `Status: ${getStatusText(order.status)}\n`;
   text += `Data: ${new Date(order.created_at).toLocaleString('pt-BR')}\n`;
   
@@ -364,7 +367,9 @@ function formatOrderText(order) {
   
   text += '================================\n';
   text += 'CLIENTE:\n';
-  text += `Nome: ${order.customer_name || 'Nao informado'}\n`;
+  
+  const customerName = order.customer_name || order.tab_customer_name;
+  text += `Nome: ${customerName || 'Nao informado'}\n`;
   text += `Telefone: ${order.customer_phone || 'Nao informado'}\n`;
   
   if (order.order_type === 'delivery' && order.address_street) {
@@ -481,6 +486,9 @@ function formatTabText(tabData) {
   text += '================================\n';
   text += `Comanda: ${formatDisplayNumber(tabData?.tab_id)}\n`;
   text += `Mesa: ${tableName}\n`;
+  if (tabData?.customer_name) {
+    text += `Responsavel: ${tabData.customer_name}\n`;
+  }
   text += `Pedidos: ${orders.length}\n`;
   if (tabData?.opened_at) {
     text += `Aberta em: ${new Date(tabData.opened_at).toLocaleString('pt-BR')}\n`;
