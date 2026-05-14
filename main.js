@@ -177,15 +177,16 @@ function aggregateComplements(complements) {
     const name = getComplementName(complement);
     if (!name) return;
 
+    const groupName = complement?.complement?.group_name || complement?.group_name || '';
     const unitPrice = getComplementPrice(complement);
     const qty = getComplementQuantity(complement);
-    const key = `${name}::${unitPrice.toFixed(2)}`;
+    const key = `${groupName}::${name}::${unitPrice.toFixed(2)}`;
     const existing = grouped.get(key);
 
     if (existing) {
       existing.quantity += qty;
     } else {
-      grouped.set(key, { name, unitPrice, quantity: qty });
+      grouped.set(key, { name, groupName, unitPrice, quantity: qty });
     }
   });
 
@@ -414,8 +415,9 @@ function formatOrderText(order) {
             const linePrice = c.unitPrice * c.quantity;
             complementTotal += linePrice;
             const qtyPrefix = c.quantity > 1 ? `${c.quantity}x ` : '';
+            const groupPrefix = c.groupName ? `${c.groupName}: ` : '';
             const cPriceText = linePrice !== 0 ? ` (R$ ${linePrice.toFixed(2)})` : '';
-            text += `   + ${qtyPrefix}${c.name}${cPriceText}\n`;
+            text += `   + ${groupPrefix}${qtyPrefix}${c.name}${cPriceText}\n`;
           });
         }
         
@@ -520,8 +522,9 @@ function formatTabText(tabData) {
         const linePrice = c.unitPrice * c.quantity;
         complementTotal += linePrice;
         const qtyPrefix = c.quantity > 1 ? `${c.quantity}x ` : '';
+        const groupPrefix = c.groupName ? `${c.groupName}: ` : '';
         const cPriceText = linePrice !== 0 ? ` (R$ ${linePrice.toFixed(2)})` : '';
-        text += `   + ${qtyPrefix}${c.name}${cPriceText}\n`;
+        text += `   + ${groupPrefix}${qtyPrefix}${c.name}${cPriceText}\n`;
       });
 
       if (item.price) {
