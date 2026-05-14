@@ -90,7 +90,11 @@ def montar_dados_impressao(texto, font_size='normal'):
     # Reset para configuração padrão no final
     fim = b'\x1d!\x00\x1bE\x00\x1bM\x00\x1b2'
     
-    return inicio + dados_texto + fim
+    # Adiciona avanço de linha e comando de corte (GS V 0 - Full cut)
+    # Impressoras que não suportam corte geralmente ignoram este comando
+    corte = b'\n\n\n\n\x1dV\x00'
+    
+    return inicio + dados_texto + fim + corte
 
 # Função para imprimir um texto na impressora selecionada (modo RAW)
 def imprimir_texto(texto, impressora_nome=None, font_size='normal'):
