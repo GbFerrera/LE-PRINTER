@@ -357,7 +357,7 @@ function formatOrderText(order) {
     text += `Mesa: ${order.table_name}\n`;
   }
   if (order.waiter_name) {
-    text += `Atendente: ${order.waiter_name}\n`;
+    text += `Garçom: ${order.waiter_name}\n`;
   }
   text += `Status: ${getStatusText(order.status)}\n`;
   text += `Data: ${new Date(order.created_at).toLocaleString('pt-BR')}\n`;
@@ -504,7 +504,7 @@ function formatTabText(tabData) {
       text += `Cliente: ${order.customer_name}\n`;
     }
     if (order?.waiter_name) {
-      text += `Garcom: ${order.waiter_name}\n`;
+      text += `Garçom: ${order.waiter_name}\n`;
     }
     text += '--------------------------------\n';
 
