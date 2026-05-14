@@ -69,7 +69,7 @@ if (!gotSingleInstanceLock) {
 }
 
 // Backend configuration
-const BACKEND_URL = 'http://192.168.0.100:3333';
+const BACKEND_URL = 'https://api.linkeats.com.br';
 const backendUrl = new URL(BACKEND_URL);
 const wsProtocol = backendUrl.protocol === 'https:' ? 'wss:' : 'ws:';
 const WS_URL = `${wsProtocol}//${backendUrl.host}/ws`;
