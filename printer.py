@@ -65,6 +65,9 @@ def montar_dados_impressao(texto, font_size='normal'):
     # Inicializa impressora
     inicio = b'\x1b@'
     
+    # Adiciona alinhamento à esquerda explícito
+    inicio += b'\x1ba\x00'
+    
     # Configura fonte e espaçamento conforme tamanho
     if font_size == 'large':
         # Fonte grande (altura dupla + espaçamento generoso)
@@ -92,7 +95,7 @@ def montar_dados_impressao(texto, font_size='normal'):
     
     # Adiciona avanço de linha e comando de corte (GS V 0 - Full cut)
     # Impressoras que não suportam corte geralmente ignoram este comando
-    corte = b'\n\n\n\n\x1dV\x00'
+    corte = b'\n\n\n\n\n\n\x1dV\x00'
     
     return inicio + dados_texto + fim + corte
 
