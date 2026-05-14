@@ -871,7 +871,7 @@ ipcMain.handle('get-selected-printer', () => {
 });
 
 ipcMain.handle('set-font-size', (_event, size) => {
-  const allowed = new Set(['compact', 'normal', 'medium', 'large']);
+  const allowed = new Set(['compact', 'normal', 'medium', 'medium_large', 'large']);
   const next = allowed.has(size) ? size : 'medium';
   fontSize = next;
   store.set('fontSize', next);

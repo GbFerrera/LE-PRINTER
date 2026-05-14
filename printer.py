@@ -58,7 +58,7 @@ def encode_para_impressora(texto):
 def montar_dados_impressao(texto, font_size='normal'):
     """
     Monta dados para impressão térmica com comandos ESC/POS
-    font_size: 'compact', 'normal', 'medium', 'large'
+    font_size: 'compact', 'normal', 'medium', 'medium_large', 'large'
     """
     dados_texto = encode_para_impressora(texto)
     
@@ -74,6 +74,10 @@ def montar_dados_impressao(texto, font_size='normal'):
         inicio += b'\x1bM\x00'      # Font A
         inicio += b'\x1b3\x25'      # Line spacing 37
         inicio += b'\x1d!\x10'      # Double height only
+    elif font_size == 'medium_large':
+        inicio += b'\x1bM\x00'      # Font A
+        inicio += b'\x1b3\x22'      # Line spacing 34
+        inicio += b'\x1d!\x01'      # Height x2, width x1
     elif font_size == 'medium':
         # Fonte média (tamanho médio + espaçamento generoso)
         inicio += b'\x1bM\x00'      # Font A
