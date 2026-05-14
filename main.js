@@ -50,6 +50,7 @@ let printerReady = false;
 let reconnectTimer = null;
 let isConnecting = false;
 let selectedPrinter = null;
+let fontSize = store.get('fontSize', 'medium');
 const recentlyPrinted = new Set(); // deduplication guard
 
 function resolveAppIconPath() {
@@ -566,7 +567,7 @@ async function printOrder(order) {
       action: 'print',
       text: text,
       printer: selectedPrinter || undefined,
-      font_size: 'medium'
+      font_size: fontSize
     });
 
     if (response.success) {
@@ -866,6 +867,19 @@ ipcMain.handle('get-selected-printer', () => {
   return { printer: selectedPrinter };
 });
 
+ipcMain.handle('set-font-size', (_event, size) => {
+  const allowed = new Set(['compact', 'normal', 'medium', 'large']);
+  const next = allowed.has(size) ? size : 'medium';
+  fontSize = next;
+  store.set('fontSize', next);
+  return { success: true };
+});
+
+ipcMain.handle('get-font-size', () => {
+  fontSize = store.get('fontSize', 'medium');
+  return { font_size: fontSize };
+});
+
 ipcMain.handle('print-order', async (event, order) => {
   const result = await printOrder(order);
   return result;
@@ -888,7 +902,8 @@ ipcMain.handle('test-printer', async () => {
   try {
     const response = await sendPrinterCommand({
       action: 'test',
-      date: new Date().toLocaleString('pt-BR')
+      date: new Date().toLocaleString('pt-BR'),
+      font_size: fontSize
     });
     
     if (response.success) {

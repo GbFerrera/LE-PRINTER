@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listPrinters: () => ipcRenderer.invoke('list-printers'),
   setPrinter: (name) => ipcRenderer.invoke('set-printer', name),
   getSelectedPrinter: () => ipcRenderer.invoke('get-selected-printer'),
+  setFontSize: (size) => ipcRenderer.invoke('set-font-size', size),
+  getFontSize: () => ipcRenderer.invoke('get-font-size'),
 
   // Printing
   printOrder: (order) => ipcRenderer.invoke('print-order', order),

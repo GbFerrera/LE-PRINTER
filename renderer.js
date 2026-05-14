@@ -13,6 +13,7 @@ const connectionIndicator = document.getElementById('connection-indicator');
 const connectionText = document.getElementById('connection-text');
 const autoPrintToggle = document.getElementById('auto-print-toggle');
 const testPrinterBtn = document.getElementById('test-printer-btn');
+const fontSizeSelect = document.getElementById('font-size-select');
 const ordersList = document.getElementById('orders-list');
 const pendingCount = document.getElementById('pending-count');
 const clearAllOrdersBtn = document.getElementById('clear-all-orders-btn');
@@ -34,6 +35,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await tryAutoConnect();
     await loadAutoPrintStatus();
     await loadPrinters();
+    await loadFontSize();
     setupEventListeners();
 });
 
@@ -97,6 +99,18 @@ async function loadAutoPrintStatus() {
     }
 }
 
+async function loadFontSize() {
+    if (!fontSizeSelect) return;
+    try {
+        const data = await window.electronAPI.getFontSize();
+        if (data && data.font_size) {
+            fontSizeSelect.value = data.font_size;
+        }
+    } catch (error) {
+        console.error('Error loading font size:', error);
+    }
+}
+
 function showApp() {
     loginSection.classList.add('hidden');
     appSection.classList.remove('hidden');
@@ -128,6 +142,14 @@ function setupEventListeners() {
         showStatus(name ? `Impressora selecionada: ${name}` : 'Usando impressora padrão do sistema', 'success');
     });
     refreshPrintersBtn.addEventListener('click', loadPrinters);
+
+    if (fontSizeSelect) {
+        fontSizeSelect.addEventListener('change', async () => {
+            const size = fontSizeSelect.value;
+            await window.electronAPI.setFontSize(size);
+            showStatus(`Fonte: ${fontSizeSelect.options[fontSizeSelect.selectedIndex].textContent}`, 'success');
+        });
+    }
 
     // Logout button (header)
     logoutBtn.addEventListener('click', handleDisconnect);

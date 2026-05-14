@@ -157,7 +157,8 @@ def processar_comando(comando):
                           "Link Eats - Sistema funcionando!\n" \
                           "Data: " + comando.get('date', '') + "\n" \
                           "=========================="
-            resultado = imprimir_texto(texto_teste)
+            font_size = comando.get('font_size', 'normal')
+            resultado = imprimir_texto(texto_teste, None, font_size)
             return resultado
         
         else:
