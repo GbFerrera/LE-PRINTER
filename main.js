@@ -110,7 +110,8 @@ function getOrderTypeText(type) {
   const types = {
     'delivery': 'Entrega',
     'pickup': 'Retirada',
-    'presential': 'Presencial'
+    'presential': 'Presencial',
+    'table': 'Mesa'
   };
   return types[type] || type;
 }
@@ -360,6 +361,9 @@ function formatOrderText(order) {
   text += '================================\n';
   text += `Pedido: ${formatDisplayNumber(order.id, order.order_number)}\n`;
   text += `Tipo: ${getOrderTypeText(order.order_type)}\n`;
+  if (order.order_type === 'table' && order.table_name) {
+    text += `Mesa: ${order.table_name}\n`;
+  }
   text += `Status: ${getStatusText(order.status)}\n`;
   text += `Data: ${new Date(order.created_at).toLocaleString('pt-BR')}\n`;
   
@@ -476,7 +480,7 @@ function formatTabText(tabData) {
   let text = '';
   const empresa = companyName || 'LINK EATS';
   const pad = Math.max(0, Math.floor((32 - empresa.length) / 2));
-  const tableName = tabData?.table_name || '-';
+  const tableName = tabData?.table_name || tabData?.tab_id || '-';
   const orders = Array.isArray(tabData?.orders) ? tabData.orders : [];
 
   text += '================================\n';
