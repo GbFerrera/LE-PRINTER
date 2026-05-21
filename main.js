@@ -375,26 +375,33 @@ function formatOrderText(order) {
     text += `Agendado para: ${new Date(order.scheduled_for).toLocaleString('pt-BR')}\n`;
   }
   
-  text += '================================\n';
-  text += 'CLIENTE:\n';
-  
   const customerName = order.customer_name || order.tab_customer_name;
-  text += `Nome: ${customerName || 'Nao informado'}\n`;
-  text += `Telefone: ${order.customer_phone || 'Nao informado'}\n`;
-  
-  if (order.order_type === 'delivery' && order.address_street) {
-    text += '\n';
-    text += 'ENDERECO DE ENTREGA:\n';
-    text += `${order.address_street}, ${order.address_number || 'S/N'}\n`;
-    if (order.address_complement) {
-      text += `${order.address_complement}\n`;
+  const customerPhone = order.customer_phone;
+  const hasDeliveryAddress = order.order_type === 'delivery' && order.address_street;
+
+  if (customerName || customerPhone || hasDeliveryAddress) {
+    text += '================================\n';
+    text += 'CLIENTE:\n';
+    
+    if (customerName || customerPhone) {
+      if (customerName) text += `Nome: ${customerName}\n`;
+      if (customerPhone) text += `Telefone: ${customerPhone}\n`;
     }
-    text += `${order.address_neighborhood} - ${order.address_city}\n`;
-    if (order.address_zip) {
-      text += `CEP: ${order.address_zip}\n`;
-    }
-    if (order.address_reference) {
-      text += `Ref: ${order.address_reference}\n`;
+    
+    if (hasDeliveryAddress) {
+      if (customerName || customerPhone) text += '\n';
+      text += 'ENDERECO DE ENTREGA:\n';
+      text += `${order.address_street}, ${order.address_number || 'S/N'}\n`;
+      if (order.address_complement) {
+        text += `${order.address_complement}\n`;
+      }
+      text += `${order.address_neighborhood} - ${order.address_city}\n`;
+      if (order.address_zip) {
+        text += `CEP: ${order.address_zip}\n`;
+      }
+      if (order.address_reference) {
+        text += `Ref: ${order.address_reference}\n`;
+      }
     }
   }
   
@@ -977,6 +984,58 @@ ipcMain.handle('test-printer', async () => {
   }
 });
 
+// Auto-updater logic
+async function checkForUpdates() {
+  if (!app.isPackaged) {
+    console.log('App não está empacotado. Pulando verificação de atualização.');
+    return;
+  }
+  
+  try {
+    console.log('Verificando atualizações...');
+    const res = await fetch(`${BACKEND_URL}/downloads/kds/windows/version`);
+    if (!res.ok) return;
+    
+    const data = await res.json();
+    const currentVersion = app.getVersion();
+    
+    // Comparação simples de versão
+    if (data.version && data.version !== currentVersion) {
+      console.log(`Nova versão encontrada: ${data.version} (Atual: ${currentVersion}). Baixando...`);
+      
+      const updateUrl = data.updateUrl.startsWith('http') ? data.updateUrl : `${BACKEND_URL}${data.updateUrl}`;
+      const downloadRes = await fetch(updateUrl);
+      if (!downloadRes.ok) throw new Error('Falha ao baixar atualização');
+      
+      const tempPath = path.join(app.getPath('temp'), `update-${data.version}.exe`);
+      const fileStream = fs.createWriteStream(tempPath);
+      
+      await new Promise((resolve, reject) => {
+        downloadRes.body.pipe(fileStream);
+        downloadRes.body.on('error', reject);
+        fileStream.on('finish', resolve);
+      });
+      
+      console.log(`Atualização baixada em ${tempPath}. Executando...`);
+      
+      // Execute the installer
+      // /S is silent for NSIS, /force closes the app if necessary
+      const child = spawn(tempPath, ['/S', '/force'], {
+        detached: true,
+        stdio: 'ignore'
+      });
+      child.unref();
+      
+      console.log('Fechando app para atualização...');
+      app.quit();
+    } else {
+      console.log(`App está atualizado (Versão: ${currentVersion})`);
+    }
+  } catch (err) {
+    console.error('Erro ao verificar atualizações:', err);
+  }
+}
+
 // App events
 app.whenReady().then(() => {
   console.log('App is ready, creating window...');
@@ -993,6 +1052,16 @@ app.whenReady().then(() => {
   setTimeout(() => {
     initializePrinter();
   }, 1000);
+
+  // Check for updates on startup
+  setTimeout(() => {
+    checkForUpdates();
+  }, 3000);
+
+  // Check for updates every 1 hour (3600000 ms)
+  setInterval(() => {
+    checkForUpdates();
+  }, 3600000);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
