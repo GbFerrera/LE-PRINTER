@@ -500,6 +500,9 @@ function formatTabText(tabData) {
   if (tabData?.customer_name) {
     text += `Responsavel: ${tabData.customer_name}\n`;
   }
+  if (tabData?.people_count) {
+    text += `Pessoas: ${tabData.people_count}\n`;
+  }
   text += `Pedidos: ${orders.length}\n`;
   if (tabData?.opened_at) {
     text += `Aberta em: ${new Date(tabData.opened_at).toLocaleString('pt-BR')}\n`;
@@ -557,6 +560,10 @@ function formatTabText(tabData) {
     text += '================================\n';
   });
 
+  if (tabData?.couvert_fee) {
+    text += `Couvert (${tabData?.people_count || 1}x): R$ ${parseFloat(tabData.couvert_fee).toFixed(2)}\n`;
+  }
+  
   text += `TOTAL COMANDA: R$ ${parseFloat(tabData?.total || 0).toFixed(2)}\n`;
   text += '\n';
   text += '   Obrigado pela preferencia!\n';
