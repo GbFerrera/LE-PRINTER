@@ -534,7 +534,8 @@ function createOrderDetailHTML(order) {
             const productName = item.product?.name || item.Product?.name || item.name || 'Produto não identificado';
             const quantity = item.quantity || 1;
             const price = item.price || 0;
-            const itemObs = item.observation || item.observations || item.notes || item.obs || '';
+            const itemObsRaw = item.observation ?? item.observations ?? item.observacao ?? item.notes ?? item.obs ?? '';
+            const itemObs = typeof itemObsRaw === 'string' ? itemObsRaw.trim() : String(itemObsRaw || '').trim();
             
             return `
                 <div class="order-item-detail">

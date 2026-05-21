@@ -399,8 +399,9 @@ function formatOrderText(order) {
       text += `${index + 1}. ${item.quantity}x ${itemName}\n`;
       
       // Show item observations right after item name
-      const itemObs = item.observations || item.observation || item.notes || item.obs || '';
-      if (itemObs) {
+      const itemObsRaw = item.observations ?? item.observation ?? item.observacao ?? item.notes ?? item.obs ?? '';
+      const itemObs = typeof itemObsRaw === 'string' ? itemObsRaw.trim() : String(itemObsRaw || '').trim();
+      if (itemObs.length > 0) {
         text += `   Obs: ${itemObs}\n`;
       }
       
@@ -512,8 +513,9 @@ function formatTabText(tabData) {
     (order.items || []).forEach((item, idx) => {
       const itemName = item.product?.name || 'Item';
       text += `${idx + 1}. ${item.quantity}x ${itemName}\n`;
-      const itemObs = item.observations || item.observation || item.notes || item.obs || '';
-      if (itemObs) {
+      const itemObsRaw = item.observations ?? item.observation ?? item.observacao ?? item.notes ?? item.obs ?? '';
+      const itemObs = typeof itemObsRaw === 'string' ? itemObsRaw.trim() : String(itemObsRaw || '').trim();
+      if (itemObs.length > 0) {
         text += `   Obs: ${itemObs}\n`;
       }
       if (item.price) {
