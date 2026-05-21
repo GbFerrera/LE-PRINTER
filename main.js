@@ -170,6 +170,14 @@ function getComplementQuantity(complement) {
   return 1;
 }
 
+function getComplementGroupIsNegative(complement) {
+  const raw =
+    complement?.complement?.group_is_negative ??
+    complement?.group_is_negative ??
+    complement?.Complement?.ComplementGroup?.is_negative;
+  return Boolean(raw);
+}
+
 function aggregateComplements(complements) {
   const grouped = new Map();
 
@@ -178,15 +186,16 @@ function aggregateComplements(complements) {
     if (!name) return;
 
     const groupName = complement?.complement?.group_name || complement?.group_name || '';
+    const isNegative = getComplementGroupIsNegative(complement);
     const unitPrice = getComplementPrice(complement);
     const qty = getComplementQuantity(complement);
-    const key = `${groupName}::${name}::${unitPrice.toFixed(2)}`;
+    const key = `${isNegative ? 'neg' : 'pos'}::${groupName}::${name}::${unitPrice.toFixed(2)}`;
     const existing = grouped.get(key);
 
     if (existing) {
       existing.quantity += qty;
     } else {
-      grouped.set(key, { name, groupName, unitPrice, quantity: qty });
+      grouped.set(key, { name, groupName, unitPrice, quantity: qty, isNegative });
     }
   });
 
@@ -407,7 +416,8 @@ function formatOrderText(order) {
           const qtyPrefix = c.quantity > 1 ? `${c.quantity}x ` : '';
           const groupPrefix = c.groupName ? `${c.groupName}: ` : '';
           const cPriceText = linePrice !== 0 ? ` (R$ ${linePrice.toFixed(2)})` : '';
-          text += `   + ${groupPrefix}${qtyPrefix}${c.name}${cPriceText}\n`;
+            const sign = c.isNegative ? '-' : '+';
+            text += `   ${sign} ${groupPrefix}${qtyPrefix}${c.name}${cPriceText}\n`;
         });
       }
 
@@ -520,7 +530,8 @@ function formatTabText(tabData) {
         const qtyPrefix = c.quantity > 1 ? `${c.quantity}x ` : '';
         const groupPrefix = c.groupName ? `${c.groupName}: ` : '';
         const cPriceText = linePrice !== 0 ? ` (R$ ${linePrice.toFixed(2)})` : '';
-        text += `   + ${groupPrefix}${qtyPrefix}${c.name}${cPriceText}\n`;
+        const sign = c.isNegative ? '-' : '+';
+        text += `   ${sign} ${groupPrefix}${qtyPrefix}${c.name}${cPriceText}\n`;
       });
 
       const itemObsRaw = item.observations ?? item.observation ?? item.observacao ?? item.notes ?? item.obs ?? '';
