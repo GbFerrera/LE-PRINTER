@@ -339,11 +339,14 @@ async function handleTestPrinter() {
 // Handle new order
 function handleNewOrder(order) {
     // Always add to pending list so user can see it
-    const exists = pendingOrders.some(o => o.id === order.id);
-    if (!exists) {
+    const existingIndex = pendingOrders.findIndex(o => o.id === order.id);
+    if (existingIndex === -1) {
         pendingOrders.unshift(order);
-        updateOrdersList();
+    } else {
+        pendingOrders.splice(existingIndex, 1);
+        pendingOrders.unshift(order);
     }
+    updateOrdersList();
     updateLastActivity();
     if (order?.kind === 'tab_print') {
         showStatus(`Comanda recebida para impressão: mesa ${order.table_name || '-'}`, 'info');
