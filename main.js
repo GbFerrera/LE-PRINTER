@@ -390,39 +390,37 @@ function formatOrderText(order) {
   }
   
   text += '================================\n';
-  text += '\x1bE\x01';
+  text += '\x1bE\x00';
   text += 'ITENS DO PEDIDO:\n';
   
   if (order.items && order.items.length > 0) {
     order.items.forEach((item, index) => {
       const itemName = item.product?.name || item.name || 'Item';
       text += `${index + 1}. ${item.quantity}x ${itemName}\n`;
-      
-      // Show item observations right after item name
+
+      let complementTotal = 0;
+      if (item.complements && item.complements.length > 0) {
+        const aggregatedComplements = aggregateComplements(item.complements);
+        aggregatedComplements.forEach((c) => {
+          const linePrice = c.unitPrice * c.quantity;
+          complementTotal += linePrice;
+          const qtyPrefix = c.quantity > 1 ? `${c.quantity}x ` : '';
+          const groupPrefix = c.groupName ? `${c.groupName}: ` : '';
+          const cPriceText = linePrice !== 0 ? ` (R$ ${linePrice.toFixed(2)})` : '';
+          text += `   + ${groupPrefix}${qtyPrefix}${c.name}${cPriceText}\n`;
+        });
+      }
+
       const itemObsRaw = item.observations ?? item.observation ?? item.observacao ?? item.notes ?? item.obs ?? '';
       const itemObs = typeof itemObsRaw === 'string' ? itemObsRaw.trim() : String(itemObsRaw || '').trim();
       if (itemObs.length > 0) {
+        text += '\x1bE\x01';
         text += `   Obs: ${itemObs}\n`;
+        text += '\x1bE\x00';
       }
-      
+
       if (item.price) {
         text += `   Valor unit: R$ ${parseFloat(item.price).toFixed(2)}\n`;
-        
-        // Calculate total complement price for this item
-        let complementTotal = 0;
-        if (item.complements && item.complements.length > 0) {
-          const aggregatedComplements = aggregateComplements(item.complements);
-          aggregatedComplements.forEach((c) => {
-            const linePrice = c.unitPrice * c.quantity;
-            complementTotal += linePrice;
-            const qtyPrefix = c.quantity > 1 ? `${c.quantity}x ` : '';
-            const groupPrefix = c.groupName ? `${c.groupName}: ` : '';
-            const cPriceText = linePrice !== 0 ? ` (R$ ${linePrice.toFixed(2)})` : '';
-            text += `   + ${groupPrefix}${qtyPrefix}${c.name}${cPriceText}\n`;
-          });
-        }
-        
-        // Subtotal = (item price + complement total) * quantity
         const itemSubtotal = (parseFloat(item.price) + complementTotal) * item.quantity;
         text += `   Subtotal: R$ ${itemSubtotal.toFixed(2)}\n`;
       }
@@ -509,18 +507,10 @@ function formatTabText(tabData) {
     }
     text += '--------------------------------\n';
 
-    text += '\x1bE\x01';
+    text += '\x1bE\x00';
     (order.items || []).forEach((item, idx) => {
       const itemName = item.product?.name || 'Item';
       text += `${idx + 1}. ${item.quantity}x ${itemName}\n`;
-      const itemObsRaw = item.observations ?? item.observation ?? item.observacao ?? item.notes ?? item.obs ?? '';
-      const itemObs = typeof itemObsRaw === 'string' ? itemObsRaw.trim() : String(itemObsRaw || '').trim();
-      if (itemObs.length > 0) {
-        text += `   Obs: ${itemObs}\n`;
-      }
-      if (item.price) {
-        text += `   Valor unit: R$ ${parseFloat(item.price).toFixed(2)}\n`;
-      }
 
       let complementTotal = 0;
       const aggregatedComplements = aggregateComplements(item.complements || []);
@@ -533,7 +523,16 @@ function formatTabText(tabData) {
         text += `   + ${groupPrefix}${qtyPrefix}${c.name}${cPriceText}\n`;
       });
 
+      const itemObsRaw = item.observations ?? item.observation ?? item.observacao ?? item.notes ?? item.obs ?? '';
+      const itemObs = typeof itemObsRaw === 'string' ? itemObsRaw.trim() : String(itemObsRaw || '').trim();
+      if (itemObs.length > 0) {
+        text += '\x1bE\x01';
+        text += `   Obs: ${itemObs}\n`;
+        text += '\x1bE\x00';
+      }
+
       if (item.price) {
+        text += `   Valor unit: R$ ${parseFloat(item.price).toFixed(2)}\n`;
         const itemSubtotal = (parseFloat(item.price) + complementTotal) * item.quantity;
         text += `   Subtotal: R$ ${itemSubtotal.toFixed(2)}\n`;
       }
