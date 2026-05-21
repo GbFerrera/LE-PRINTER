@@ -512,6 +512,10 @@ function formatTabText(tabData) {
     (order.items || []).forEach((item, idx) => {
       const itemName = item.product?.name || 'Item';
       text += `${idx + 1}. ${item.quantity}x ${itemName}\n`;
+      const itemObs = item.observations || item.observation || item.notes || item.obs || '';
+      if (itemObs) {
+        text += `   Obs: ${itemObs}\n`;
+      }
       if (item.price) {
         text += `   Valor unit: R$ ${parseFloat(item.price).toFixed(2)}\n`;
       }

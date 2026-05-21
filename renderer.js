@@ -534,12 +534,13 @@ function createOrderDetailHTML(order) {
             const productName = item.product?.name || item.Product?.name || item.name || 'Produto não identificado';
             const quantity = item.quantity || 1;
             const price = item.price || 0;
+            const itemObs = item.observation || item.observations || item.notes || item.obs || '';
             
             return `
                 <div class="order-item-detail">
                     <div class="item-name">${quantity}x ${productName}</div>
                     ${price ? `<div class="item-price">R$ ${parseFloat(price).toFixed(2)}</div>` : ''}
-                    ${item.observations ? `<div class="item-obs">Obs: ${item.observations}</div>` : ''}
+                    ${itemObs ? `<div class="item-obs">Obs: ${itemObs}</div>` : ''}
                 </div>
             `;
         }).join('');
@@ -571,10 +572,10 @@ function createOrderDetailHTML(order) {
             </div>
         ` : ''}
         
-        ${order.observations ? `
+        ${(order.observation || order.observations) ? `
             <div class="order-detail-section">
                 <h4>Observações</h4>
-                <p>${order.observations}</p>
+                <p>${order.observation || order.observations}</p>
             </div>
         ` : ''}
     `;
