@@ -52,6 +52,7 @@
     ],
     "files": [
       "main.js",
+      "printFormat.js",
       "renderer.js",
       "index.html",
       "styles.css",

@@ -5,6 +5,17 @@ const Store = require('electron-store');
 const WebSocket = require('ws');
 const { spawn } = require('child_process');
 const fetch = require('node-fetch');
+const {
+  formatOrderText,
+  formatTabText,
+  formatFontSampleText,
+  buildOrderReceipt,
+  buildTabReceipt,
+  buildFontSampleReceipt,
+  documentToPlainText,
+  normalizeFontScale,
+  getFontScaleLabel,
+} = require('./printFormat');
 
 // Configurações para resolver problemas no Windows
 app.disableHardwareAcceleration();
@@ -51,7 +62,8 @@ let printerReady = false;
 let reconnectTimer = null;
 let isConnecting = false;
 let selectedPrinter = null;
-let fontSize = store.get('fontSize', 'medium');
+let fontScale = normalizeFontScale(store.get('fontScale', store.get('fontSize', 5)));
+let paperWidth = store.get('paperWidth', '58mm') === '80mm' ? '80mm' : '58mm';
 const recentlyPrinted = new Set(); // deduplication guard
 
 function resolveAppIconPath() {
@@ -62,10 +74,39 @@ function resolveAppIconPath() {
   return candidates.find((candidate) => candidate && fs.existsSync(candidate)) || null;
 }
 
+function resolveLogoPath() {
+  const candidates = [
+    path.join(__dirname, 'public', 'logo.png'),
+    path.join(process.resourcesPath || '', 'public', 'logo.png'),
+  ];
+  return candidates.find((candidate) => candidate && fs.existsSync(candidate)) || null;
+}
+
 // Evita múltiplas instâncias concorrendo pelo mesmo arquivo de config (electron-store)
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
   app.quit();
+}
+
+function getPrintOptions() {
+  return { paperWidth, fontScale };
+}
+
+function buildReceiptForOrder(order) {
+  const options = getPrintOptions();
+  if (order?.kind === 'tab_print') {
+    return buildTabReceipt(order, companyName, options);
+  }
+  return buildOrderReceipt(order, companyName, options);
+}
+
+function buildPrinterCommandPayload(extra = {}) {
+  return {
+    font_scale: fontScale,
+    paper_width: paperWidth,
+    logo_path: resolveLogoPath() || undefined,
+    ...extra,
+  };
 }
 
 // Backend configuration
@@ -94,112 +135,6 @@ async function handlePrintOrderEvent(payload) {
       mainWindow.webContents.send('print-result', { orderId: payload.id, success: false, mode: 'error', message: error.message, auto: true });
     }
   }
-}
-
-// Helper functions for text formatting
-function getOrderTypeText(type) {
-  const types = {
-    'delivery': 'Entrega',
-    'pickup': 'Retirada',
-    'presential': 'Presencial',
-    'table': 'Mesa'
-  };
-  return types[type] || type;
-}
-
-function getStatusText(status) {
-  const statuses = {
-    'new': 'Novo',
-    'preparing': 'Preparando',
-    'ready': 'Pronto',
-    'delivered': 'Entregue',
-    'canceled': 'Cancelado',
-    'scheduled': 'Agendado'
-  };
-  return statuses[status] || status;
-}
-
-function getPaymentMethodText(method) {
-  const methods = {
-    'money': 'Dinheiro',
-    'pix': 'PIX',
-    'card': 'Cartão',
-    'credit_card': 'Cartão de Crédito',
-    'debit_card': 'Cartão de Débito'
-  };
-  return methods[method] || method;
-}
-
-function formatDisplayNumber(id, number) {
-  if (number) return `#${number}`;
-  if (!id) return '#0000';
-  const base = String(id).replace(/-/g, '').slice(0, 8);
-  const numericHash = parseInt(base, 16);
-  if (Number.isNaN(numericHash)) {
-    return `#${base.slice(-4).padStart(4, '0')}`;
-  }
-  return `#${String(numericHash).slice(0, 4).padStart(4, '0')}`;
-}
-
-function getComplementName(complement) {
-  return (
-    complement?.complement?.name ||
-    complement?.Complement?.name ||
-    complement?.name ||
-    ''
-  );
-}
-
-function getComplementPrice(complement) {
-  const raw = complement?.price;
-  const parsed = raw == null ? 0 : parseFloat(raw);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function getComplementQuantity(complement) {
-  const candidates = [
-    complement?.quantity,
-    complement?.qtd,
-    complement?.amount,
-    complement?.default_qtd,
-  ];
-  for (const value of candidates) {
-    const n = Number(value);
-    if (Number.isFinite(n) && n > 0) return Math.trunc(n);
-  }
-  return 1;
-}
-
-function getComplementGroupIsNegative(complement) {
-  const raw =
-    complement?.complement?.group_is_negative ??
-    complement?.group_is_negative ??
-    complement?.Complement?.ComplementGroup?.is_negative;
-  return Boolean(raw);
-}
-
-function aggregateComplements(complements) {
-  const grouped = new Map();
-
-  (complements || []).forEach((complement) => {
-    const name = getComplementName(complement);
-    if (!name) return;
-
-    const groupName = complement?.complement?.group_name || complement?.group_name || '';
-    const isNegative = getComplementGroupIsNegative(complement);
-    const unitPrice = getComplementPrice(complement);
-    const qty = getComplementQuantity(complement);
-    const key = `${isNegative ? 'neg' : 'pos'}::${groupName}::${name}::${unitPrice.toFixed(2)}`;
-    const existing = grouped.get(key);
-
-    if (existing) {
-      existing.quantity += qty;
-    } else {
-      grouped.set(key, { name, groupName, unitPrice, quantity: qty, isNegative });
-    }
-  });
-
-  return Array.from(grouped.values());
 }
 
 function createWindow() {
@@ -346,263 +281,26 @@ function sendPrinterCommand(command) {
   });
 }
 
-// Format order for printing
-function formatOrderText(order) {
-  // Debug: Log all order fields to identify source of duplicate item observations
-  console.log('🔍 DEBUG: Order object keys:', Object.keys(order));
-  console.log('🔍 DEBUG: Order object (first 500 chars):', JSON.stringify(order).substring(0, 500));
-  
-  let text = '';
-  const empresa = companyName || 'LINK EATS';
-  const pad = Math.max(0, Math.floor((32 - empresa.length) / 2));
-  
-  text += '================================\n';
-  text += ' '.repeat(pad) + empresa + '\n';
-  text += '         NOVO PEDIDO\n';
-  text += '================================\n';
-  text += `Pedido: ${formatDisplayNumber(order.id, order.order_number)}\n`;
-  text += `Tipo: ${getOrderTypeText(order.order_type)}\n`;
-  if (order.order_type === 'table' && order.table_name) {
-    text += `Mesa: ${order.table_name}\n`;
-  }
-  if (order.waiter_name) {
-    text += `Garçom: ${order.waiter_name}\n`;
-  }
-  text += `Status: ${getStatusText(order.status)}\n`;
-  text += `Data: ${new Date(order.created_at).toLocaleString('pt-BR')}\n`;
-  
-  if (order.is_scheduled && order.scheduled_for) {
-    text += `Agendado para: ${new Date(order.scheduled_for).toLocaleString('pt-BR')}\n`;
-  }
-  
-  const customerName = order.customer_name || order.tab_customer_name;
-  const customerPhone = order.customer_phone;
-  const hasDeliveryAddress = order.order_type === 'delivery' && order.address_street;
-
-  if (customerName || customerPhone || hasDeliveryAddress) {
-    text += '================================\n';
-    text += 'CLIENTE:\n';
-    
-    if (customerName || customerPhone) {
-      if (customerName) text += `Nome: ${customerName}\n`;
-      if (customerPhone) text += `Telefone: ${customerPhone}\n`;
-    }
-    
-    if (hasDeliveryAddress) {
-      if (customerName || customerPhone) text += '\n';
-      text += 'ENDERECO DE ENTREGA:\n';
-      text += `${order.address_street}, ${order.address_number || 'S/N'}\n`;
-      if (order.address_complement) {
-        text += `${order.address_complement}\n`;
-      }
-      text += `${order.address_neighborhood} - ${order.address_city}\n`;
-      if (order.address_zip) {
-        text += `CEP: ${order.address_zip}\n`;
-      }
-      if (order.address_reference) {
-        text += `Ref: ${order.address_reference}\n`;
-      }
-    }
-  }
-  
-  text += '================================\n';
-  text += '\x1bE\x00';
-  text += 'ITENS DO PEDIDO:\n';
-  
-  if (order.items && order.items.length > 0) {
-    order.items.forEach((item, index) => {
-      const itemName = item.product?.name || item.name || 'Item';
-      text += `${index + 1}. ${item.quantity}x ${itemName}\n`;
-
-      let complementTotal = 0;
-      if (item.complements && item.complements.length > 0) {
-        const aggregatedComplements = aggregateComplements(item.complements);
-        aggregatedComplements.forEach((c) => {
-          const linePrice = c.unitPrice * c.quantity;
-          complementTotal += linePrice;
-          const qtyPrefix = c.quantity > 1 ? `${c.quantity}x ` : '';
-          const groupPrefix = c.groupName ? `${c.groupName}: ` : '';
-          const cPriceText = linePrice !== 0 ? ` (R$ ${linePrice.toFixed(2)})` : '';
-            const sign = c.isNegative ? '-' : '+';
-            text += `   ${sign} ${groupPrefix}${qtyPrefix}${c.name}${cPriceText}\n`;
-        });
-      }
-
-      const itemObsRaw = item.observations ?? item.observation ?? item.observacao ?? item.notes ?? item.obs ?? '';
-      const itemObs = typeof itemObsRaw === 'string' ? itemObsRaw.trim() : String(itemObsRaw || '').trim();
-      if (itemObs.length > 0) {
-        text += '\x1bE\x01';
-        text += `   Obs: ${itemObs}\n`;
-        text += '\x1bE\x00';
-      }
-
-      if (item.price) {
-        text += `   Valor unit: R$ ${parseFloat(item.price).toFixed(2)}\n`;
-        const itemSubtotal = (parseFloat(item.price) + complementTotal) * item.quantity;
-        text += `   Subtotal: R$ ${itemSubtotal.toFixed(2)}\n`;
-      }
-      text += '\n';
-    });
-  }
-  text += '\x1bE\x00';
-  
-  text += '================================\n';
-  
-  if (order.payments && order.payments.length > 0) {
-    text += 'PAGAMENTO:\n';
-    order.payments.forEach((payment, index) => {
-      if (index > 0) text += '--------------------------------\n';
-      text += `Metodo: ${getPaymentMethodText(payment.method)}\n`;
-      text += `Valor: R$ ${parseFloat(payment.amount).toFixed(2)}\n`;
-      if (payment.change_for) {
-        const change = parseFloat(payment.change_for) - parseFloat(payment.amount);
-        text += `Troco para: R$ ${parseFloat(payment.change_for).toFixed(2)}\n`;
-        text += `Troco: R$ ${change.toFixed(2)}\n`;
-      }
-    });
-    text += '================================\n';
-  }
-  
-  text += `TOTAL DO PEDIDO: R$ ${parseFloat(order.total).toFixed(2)}\n`;
-  
-  if (order.observation) {
-    text += '\n';
-    text += 'OBSERVACOES:\n';
-    text += order.observation + '\n';
-  }
-  
-  // NOTE: Suppressing any duplicate item observations fields that might exist
-  // Item observations should only appear within each item in the ITENS DO PEDIDO section
-  // Common fields that might contain duplicate item observations:
-  // - order.item_observations
-  // - order.observacoes_dos_itens  
-  // - order.itemObservations
-  // These are intentionally NOT processed to avoid duplication
-  
-  text += '\n';
-  text += '   Obrigado pela preferencia!\n';
-  text += '      www.linkeats.com.br\n';
-  text += '\n';
-  text += '\n';
-  text += '\n';
-  text += '\n';
-  
-  return text;
-}
-
-// Format consolidated tab receipt (single print with all linked orders)
-function formatTabText(tabData) {
-  let text = '';
-  const empresa = companyName || 'LINK EATS';
-  const pad = Math.max(0, Math.floor((32 - empresa.length) / 2));
-  const tableName = tabData?.table_name || tabData?.tab_id || '-';
-  const orders = Array.isArray(tabData?.orders) ? tabData.orders : [];
-
-  text += '================================\n';
-  text += ' '.repeat(pad) + empresa + '\n';
-  text += '       COMPROVANTE COMANDA\n';
-  text += '================================\n';
-  text += `Comanda: ${formatDisplayNumber(tabData?.tab_id)}\n`;
-  text += `Mesa: ${tableName}\n`;
-  if (tabData?.customer_name) {
-    text += `Responsavel: ${tabData.customer_name}\n`;
-  }
-  if (tabData?.people_count) {
-    text += `Pessoas: ${tabData.people_count}\n`;
-  }
-  text += `Pedidos: ${orders.length}\n`;
-  if (tabData?.opened_at) {
-    text += `Aberta em: ${new Date(tabData.opened_at).toLocaleString('pt-BR')}\n`;
-  }
-  text += '================================\n';
-
-  orders.forEach((order, orderIdx) => {
-    text += `Pedido ${orderIdx + 1}: ${formatDisplayNumber(order?.id, order?.order_number)}\n`;
-    text += `Hora: ${new Date(order.created_at).toLocaleString('pt-BR')}\n`;
-    if (order?.customer_name) {
-      text += `Cliente: ${order.customer_name}\n`;
-    }
-    if (order?.waiter_name) {
-      text += `Garçom: ${order.waiter_name}\n`;
-    }
-    text += '--------------------------------\n';
-
-    text += '\x1bE\x00';
-    (order.items || []).forEach((item, idx) => {
-      const itemName = item.product?.name || 'Item';
-      text += `${idx + 1}. ${item.quantity}x ${itemName}\n`;
-
-      let complementTotal = 0;
-      const aggregatedComplements = aggregateComplements(item.complements || []);
-      aggregatedComplements.forEach((c) => {
-        const linePrice = c.unitPrice * c.quantity;
-        complementTotal += linePrice;
-        const qtyPrefix = c.quantity > 1 ? `${c.quantity}x ` : '';
-        const groupPrefix = c.groupName ? `${c.groupName}: ` : '';
-        const cPriceText = linePrice !== 0 ? ` (R$ ${linePrice.toFixed(2)})` : '';
-        const sign = c.isNegative ? '-' : '+';
-        text += `   ${sign} ${groupPrefix}${qtyPrefix}${c.name}${cPriceText}\n`;
-      });
-
-      const itemObsRaw = item.observations ?? item.observation ?? item.observacao ?? item.notes ?? item.obs ?? '';
-      const itemObs = typeof itemObsRaw === 'string' ? itemObsRaw.trim() : String(itemObsRaw || '').trim();
-      if (itemObs.length > 0) {
-        text += '\x1bE\x01';
-        text += `   Obs: ${itemObs}\n`;
-        text += '\x1bE\x00';
-      }
-
-      if (item.price) {
-        text += `   Valor unit: R$ ${parseFloat(item.price).toFixed(2)}\n`;
-        const itemSubtotal = (parseFloat(item.price) + complementTotal) * item.quantity;
-        text += `   Subtotal: R$ ${itemSubtotal.toFixed(2)}\n`;
-      }
-    });
-    text += '\x1bE\x00';
-
-    if (order?.observation) {
-      text += `Obs: ${order.observation}\n`;
-    }
-    text += `Total pedido: R$ ${parseFloat(order.total || 0).toFixed(2)}\n`;
-    text += '================================\n';
-  });
-
-  if (tabData?.couvert_fee) {
-    text += `Couvert (${tabData?.people_count || 1}x): R$ ${parseFloat(tabData.couvert_fee).toFixed(2)}\n`;
-  }
-  
-  text += `TOTAL COMANDA: R$ ${parseFloat(tabData?.total || 0).toFixed(2)}\n`;
-  text += '\n';
-  text += '   Obrigado pela preferencia!\n';
-  text += '      www.linkeats.com.br\n';
-  text += '\n';
-  text += '\n';
-  text += '\n';
-  text += '\n';
-
-  return text;
-}
-
 // Print order function
 // Returns { success, mode: 'simulation'|'printer', message }
 async function printOrder(order) {
   if (!printerProcess || !printerReady) {
     console.log('=== SIMULAÇÃO DE IMPRESSÃO ===');
-    console.log(formatOrderText(order));
+    console.log(order?.kind === 'tab_print'
+      ? formatTabText(order, companyName, getPrintOptions())
+      : formatOrderText(order, companyName, getPrintOptions()));
     console.log('=== FIM DA SIMULAÇÃO ===');
     return { success: true, mode: 'simulation', message: 'Sem impressora conectada — enviado para fila de simulação' };
   }
 
   try {
-    const text = order?.kind === 'tab_print'
-      ? formatTabText(order)
-      : formatOrderText(order);
-    const response = await sendPrinterCommand({
+    const receipt = buildReceiptForOrder(order);
+    const response = await sendPrinterCommand(buildPrinterCommandPayload({
       action: 'print',
-      text: text,
+      receipt,
+      text: documentToPlainText(receipt),
       printer: selectedPrinter || undefined,
-      font_size: fontSize
-    });
+    }));
 
     if (response.success) {
       console.log('Order printed successfully:', response.message);
@@ -936,16 +634,59 @@ ipcMain.handle('get-selected-printer', () => {
 });
 
 ipcMain.handle('set-font-size', (_event, size) => {
-  const allowed = new Set(['compact', 'normal', 'medium', 'medium_large', 'large']);
-  const next = allowed.has(size) ? size : 'medium';
-  fontSize = next;
-  store.set('fontSize', next);
-  return { success: true };
+  fontScale = normalizeFontScale(size);
+  store.set('fontScale', fontScale);
+  store.delete('fontSize');
+  return { success: true, font_scale: fontScale, label: getFontScaleLabel(fontScale) };
 });
 
 ipcMain.handle('get-font-size', () => {
-  fontSize = store.get('fontSize', 'medium');
-  return { font_size: fontSize };
+  fontScale = normalizeFontScale(store.get('fontScale', store.get('fontSize', 5)));
+  return {
+    font_scale: fontScale,
+    font_size: String(fontScale),
+    label: getFontScaleLabel(fontScale),
+    paper_width: paperWidth,
+  };
+});
+
+ipcMain.handle('set-paper-width', (_event, width) => {
+  paperWidth = width === '80mm' ? '80mm' : '58mm';
+  store.set('paperWidth', paperWidth);
+  return { success: true, paper_width: paperWidth };
+});
+
+ipcMain.handle('get-paper-width', () => {
+  paperWidth = store.get('paperWidth', '58mm') === '80mm' ? '80mm' : '58mm';
+  return { paper_width: paperWidth };
+});
+
+ipcMain.handle('print-font-sample', async () => {
+  const receipt = buildFontSampleReceipt(fontScale, paperWidth, getPrintOptions());
+  const sampleText = documentToPlainText(receipt);
+  if (!printerProcess || !printerReady) {
+    const initialized = initializePrinter();
+    if (!initialized) {
+      console.log('=== AMOSTRA DE FONTE (SIMULAÇÃO) ===');
+      console.log(sampleText);
+      return { success: true, message: 'Amostra gerada em modo simulação (veja o console)' };
+    }
+  }
+
+  try {
+    const response = await sendPrinterCommand(buildPrinterCommandPayload({
+      action: 'test',
+      receipt,
+      text: sampleText,
+      date: new Date().toLocaleString('pt-BR'),
+    }));
+    if (response.success) {
+      return { success: true, message: response.message || 'Amostra impressa' };
+    }
+    return { success: false, message: response.error || 'Falha ao imprimir amostra' };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
 });
 
 ipcMain.handle('print-order', async (event, order) => {
@@ -968,11 +709,10 @@ ipcMain.handle('test-printer', async () => {
   }
 
   try {
-    const response = await sendPrinterCommand({
+    const response = await sendPrinterCommand(buildPrinterCommandPayload({
       action: 'test',
       date: new Date().toLocaleString('pt-BR'),
-      font_size: fontSize
-    });
+    }));
     
     if (response.success) {
       return { success: true, message: response.message || 'Teste impresso com sucesso' };
@@ -984,57 +724,185 @@ ipcMain.handle('test-printer', async () => {
   }
 });
 
-// Auto-updater logic
-async function checkForUpdates() {
-  if (!app.isPackaged) {
-    console.log('App não está empacotado. Pulando verificação de atualização.');
-    return;
-  }
-  
-  try {
-    console.log('Verificando atualizações...');
-    const res = await fetch(`${BACKEND_URL}/downloads/kds/windows/version`);
-    if (!res.ok) return;
-    
-    const data = await res.json();
-    const currentVersion = app.getVersion();
-    
-    // Comparação simples de versão
-    if (data.version && data.version !== currentVersion) {
-      console.log(`Nova versão encontrada: ${data.version} (Atual: ${currentVersion}). Baixando...`);
-      
-      const updateUrl = data.updateUrl.startsWith('http') ? data.updateUrl : `${BACKEND_URL}${data.updateUrl}`;
-      const downloadRes = await fetch(updateUrl);
-      if (!downloadRes.ok) throw new Error('Falha ao baixar atualização');
-      
-      const tempPath = path.join(app.getPath('temp'), `update-${data.version}.exe`);
-      const fileStream = fs.createWriteStream(tempPath);
-      
-      await new Promise((resolve, reject) => {
-        downloadRes.body.pipe(fileStream);
-        downloadRes.body.on('error', reject);
-        fileStream.on('finish', resolve);
-      });
-      
-      console.log(`Atualização baixada em ${tempPath}. Executando...`);
-      
-      // Execute the installer
-      // /S is silent for NSIS, /force closes the app if necessary
-      const child = spawn(tempPath, ['/S', '/force'], {
-        detached: true,
-        stdio: 'ignore'
-      });
-      child.unref();
-      
-      console.log('Fechando app para atualização...');
-      app.quit();
-    } else {
-      console.log(`App está atualizado (Versão: ${currentVersion})`);
-    }
-  } catch (err) {
-    console.error('Erro ao verificar atualizações:', err);
+// Auto-updater state
+let pendingUpdate = null;
+let downloadedUpdatePath = null;
+
+function parseSemver(version) {
+  const match = String(version || '').trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return null;
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3])
+  };
+}
+
+function compareSemver(a, b) {
+  const left = parseSemver(a);
+  const right = parseSemver(b);
+  if (!left || !right) return String(a || '').localeCompare(String(b || ''));
+  if (left.major !== right.major) return left.major - right.major;
+  if (left.minor !== right.minor) return left.minor - right.minor;
+  return left.patch - right.patch;
+}
+
+function isRemoteVersionNewer(remote, current) {
+  return compareSemver(remote, current) > 0;
+}
+
+function notifyRenderer(channel, payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, payload);
   }
 }
+
+async function fetchLatestReleaseInfo() {
+  const res = await fetch(`${BACKEND_URL}/downloads/printer/windows/version`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data?.message || 'Nenhuma versão publicada');
+  }
+  return res.json();
+}
+
+async function checkForUpdates({ silent = false } = {}) {
+  if (!app.isPackaged) {
+    if (!silent) {
+      notifyRenderer('update-not-available', {
+        currentVersion: app.getVersion(),
+        message: 'Modo desenvolvimento — atualização desativada'
+      });
+    }
+    return { available: false, reason: 'dev_mode' };
+  }
+
+  try {
+    const data = await fetchLatestReleaseInfo();
+    const currentVersion = app.getVersion();
+    const remoteVersion = data.version;
+
+    if (remoteVersion && isRemoteVersionNewer(remoteVersion, currentVersion)) {
+      pendingUpdate = {
+        version: remoteVersion,
+        downloadUrl: data.downloadUrl || data.updateUrl,
+        releaseNotes: data.releaseNotes || '',
+        sha512: data.sha512 || null,
+        fileSize: data.fileSize || null
+      };
+      downloadedUpdatePath = null;
+
+      notifyRenderer('update-available', {
+        currentVersion,
+        version: remoteVersion,
+        releaseNotes: pendingUpdate.releaseNotes,
+        fileSize: pendingUpdate.fileSize
+      });
+
+      return { available: true, update: pendingUpdate };
+    }
+
+    pendingUpdate = null;
+    notifyRenderer('update-not-available', {
+      currentVersion,
+      version: remoteVersion || currentVersion,
+      message: 'Você está na versão mais recente'
+    });
+    return { available: false };
+  } catch (err) {
+    if (!silent) {
+      notifyRenderer('update-error', { message: err.message || 'Erro ao verificar atualizações' });
+    }
+    return { available: false, error: err.message };
+  }
+}
+
+async function downloadPendingUpdate() {
+  if (!pendingUpdate?.downloadUrl) {
+    throw new Error('Nenhuma atualização disponível');
+  }
+
+  const tempPath = path.join(
+    app.getPath('temp'),
+    `link-eats-printer-update-${pendingUpdate.version}.exe`
+  );
+
+  notifyRenderer('update-download-progress', { percent: 0, transferred: 0, total: pendingUpdate.fileSize || 0 });
+
+  const downloadRes = await fetch(pendingUpdate.downloadUrl);
+  if (!downloadRes.ok) {
+    throw new Error('Falha ao baixar atualização');
+  }
+
+  const totalHeader = Number(downloadRes.headers.get('content-length') || pendingUpdate.fileSize || 0);
+  let transferred = 0;
+
+  await new Promise((resolve, reject) => {
+    const fileStream = fs.createWriteStream(tempPath);
+    downloadRes.body.on('data', (chunk) => {
+      transferred += chunk.length;
+      const percent = totalHeader > 0 ? Math.min(100, Math.round((transferred / totalHeader) * 100)) : 0;
+      notifyRenderer('update-download-progress', { percent, transferred, total: totalHeader });
+    });
+    downloadRes.body.on('error', reject);
+    fileStream.on('error', reject);
+    fileStream.on('finish', resolve);
+    downloadRes.body.pipe(fileStream);
+  });
+
+  downloadedUpdatePath = tempPath;
+  notifyRenderer('update-downloaded', {
+    version: pendingUpdate.version,
+    path: tempPath
+  });
+
+  return { success: true, path: tempPath };
+}
+
+function installDownloadedUpdate() {
+  if (!downloadedUpdatePath || !fs.existsSync(downloadedUpdatePath)) {
+    throw new Error('Baixe a atualização antes de instalar');
+  }
+
+  const child = spawn(downloadedUpdatePath, ['/S', '/force'], {
+    detached: true,
+    stdio: 'ignore'
+  });
+  child.unref();
+  app.quit();
+  return { success: true };
+}
+
+ipcMain.handle('get-app-version', () => app.getVersion());
+
+ipcMain.handle('check-for-updates', async () => {
+  try {
+    return await checkForUpdates({ silent: false });
+  } catch (error) {
+    return { available: false, error: error.message };
+  }
+});
+
+ipcMain.handle('download-update', async () => {
+  try {
+    if (!pendingUpdate) {
+      await checkForUpdates({ silent: false });
+    }
+    return await downloadPendingUpdate();
+  } catch (error) {
+    notifyRenderer('update-error', { message: error.message || 'Erro ao baixar atualização' });
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('install-update', () => {
+  try {
+    return installDownloadedUpdate();
+  } catch (error) {
+    notifyRenderer('update-error', { message: error.message || 'Erro ao instalar atualização' });
+    return { success: false, error: error.message };
+  }
+});
 
 // App events
 app.whenReady().then(() => {
@@ -1053,14 +921,14 @@ app.whenReady().then(() => {
     initializePrinter();
   }, 1000);
 
-  // Check for updates on startup
+  // Check for updates on startup (silent detection only)
   setTimeout(() => {
-    checkForUpdates();
+    checkForUpdates({ silent: true });
   }, 3000);
 
-  // Check for updates every 1 hour (3600000 ms)
+  // Check for updates every 1 hour
   setInterval(() => {
-    checkForUpdates();
+    checkForUpdates({ silent: true });
   }, 3600000);
 
   app.on('activate', () => {

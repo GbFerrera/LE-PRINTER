@@ -21,6 +21,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSelectedPrinter: () => ipcRenderer.invoke('get-selected-printer'),
   setFontSize: (size) => ipcRenderer.invoke('set-font-size', size),
   getFontSize: () => ipcRenderer.invoke('get-font-size'),
+  setPaperWidth: (width) => ipcRenderer.invoke('set-paper-width', width),
+  getPaperWidth: () => ipcRenderer.invoke('get-paper-width'),
+  printFontSample: () => ipcRenderer.invoke('print-font-sample'),
 
   // Printing
   printOrder: (order) => ipcRenderer.invoke('print-order', order),
@@ -33,5 +36,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onPrintResult: (callback) => ipcRenderer.on('print-result', callback),
 
   // Cleanup
-  removeAllListeners: (channel) => ipcRenderer.removeAllListeners(channel)
+  removeAllListeners: (channel) => ipcRenderer.removeAllListeners(channel),
+
+  // App updates
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  downloadUpdate: () => ipcRenderer.invoke('download-update'),
+  installUpdate: () => ipcRenderer.invoke('install-update'),
+  onUpdateAvailable: (callback) => ipcRenderer.on('update-available', callback),
+  onUpdateNotAvailable: (callback) => ipcRenderer.on('update-not-available', callback),
+  onUpdateDownloadProgress: (callback) => ipcRenderer.on('update-download-progress', callback),
+  onUpdateDownloaded: (callback) => ipcRenderer.on('update-downloaded', callback),
+  onUpdateError: (callback) => ipcRenderer.on('update-error', callback)
 });

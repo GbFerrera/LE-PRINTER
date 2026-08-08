@@ -18,13 +18,18 @@ if %errorlevel% neq 0 (
 )
 
 %PYTHON% -m pip install --upgrade pip
-%PYTHON% -m pip install pyinstaller pywin32
+%PYTHON% -m pip install -r requirements.txt pyinstaller
 
 echo ===== Gerando executavel da impressora =====
 if exist dist rmdir /s /q dist
 if exist build rmdir /s /q build
 
-%PYTHON% -m PyInstaller --onefile --noconsole printer.py
+%PYTHON% -m PyInstaller --onefile --noconsole ^
+  --hidden-import=PIL ^
+  --hidden-import=PIL.Image ^
+  --hidden-import=PIL.ImageDraw ^
+  --hidden-import=PIL.ImageFont ^
+  printer.py
 if %errorlevel% neq 0 (
   echo ERRO: Falha ao gerar o executavel com PyInstaller.
   exit /b 1

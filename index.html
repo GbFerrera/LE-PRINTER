@@ -73,15 +73,50 @@
                         <button id="refresh-printers-btn" class="btn-secondary" style="width:100%;margin-bottom:10px;">Atualizar Impressoras</button>
 
                         <h4>Fonte</h4>
+                        <div class="form-group font-scale-group">
+                            <div class="font-scale-header">
+                                <span id="font-scale-value">5/10 — Normal</span>
+                            </div>
+                            <input id="font-scale-slider" type="range" min="1" max="10" step="1" value="5" class="font-scale-slider">
+                            <div class="font-scale-labels">
+                                <span>Pequena</span>
+                                <span>Grande</span>
+                            </div>
+                            <button id="print-font-sample-btn" class="btn-secondary" style="width:100%;margin-top:8px;">Imprimir amostra de fonte</button>
+                            <small style="color:#888;display:block;margin-top:4px;">Impressão renderizada em imagem (controle pixel a pixel). Use a amostra para calibrar.</small>
+                        </div>
+
+                        <h4>Papel</h4>
                         <div class="form-group">
-                            <select id="font-size-select" style="width:100%;padding:8px;border:2px solid #e1e5e9;border-radius:8px;font-size:14px;">
-                                <option value="compact">Compacta</option>
-                                <option value="normal">Normal</option>
-                                <option value="medium">Média</option>
-                                <option value="medium_large">Média+</option>
-                                <option value="large">Grande</option>
+                            <select id="paper-width-select" style="width:100%;padding:8px;border:2px solid #e1e5e9;border-radius:8px;font-size:14px;">
+                                <option value="58mm">58mm (padrão)</option>
+                                <option value="80mm">80mm</option>
                             </select>
-                            <small style="color:#888;display:block;margin-top:4px;">A fonte grande pode quebrar mais linhas no papel.</small>
+                        </div>
+
+                        <hr class="settings-divider">
+
+                        <h4>Atualização</h4>
+                        <div id="update-panel" class="update-panel">
+                            <p class="update-version-line">
+                                Versão atual: <strong id="current-version">—</strong>
+                            </p>
+                            <div id="update-available-box" class="update-available-box hidden">
+                                <p class="update-new-version">
+                                    Nova versão <strong id="available-version">—</strong>
+                                </p>
+                                <p id="update-release-notes" class="update-release-notes"></p>
+                                <div id="update-progress-wrap" class="update-progress-wrap hidden">
+                                    <div class="update-progress-bar">
+                                        <div id="update-progress-fill" class="update-progress-fill"></div>
+                                    </div>
+                                    <span id="update-progress-text" class="update-progress-text">0%</span>
+                                </div>
+                                <button id="update-download-btn" class="btn-primary update-action-btn">Baixar atualização</button>
+                                <button id="update-install-btn" class="btn-primary update-action-btn hidden">Instalar e reiniciar</button>
+                            </div>
+                            <p id="update-status-text" class="update-status-text">Verificando atualizações...</p>
+                            <button id="check-updates-btn" class="btn-secondary" style="width:100%;margin-top:8px;">Verificar atualizações</button>
                         </div>
 
                         <hr class="settings-divider">

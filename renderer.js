@@ -12,7 +12,10 @@ const connectionIndicator = document.getElementById('connection-indicator');
 const connectionText = document.getElementById('connection-text');
 const autoPrintToggle = document.getElementById('auto-print-toggle');
 const testPrinterBtn = document.getElementById('test-printer-btn');
-const fontSizeSelect = document.getElementById('font-size-select');
+const fontScaleSlider = document.getElementById('font-scale-slider');
+const fontScaleValue = document.getElementById('font-scale-value');
+const printFontSampleBtn = document.getElementById('print-font-sample-btn');
+const paperWidthSelect = document.getElementById('paper-width-select');
 const ordersList = document.getElementById('orders-list');
 const pendingCount = document.getElementById('pending-count');
 const clearAllOrdersBtn = document.getElementById('clear-all-orders-btn');
@@ -23,6 +26,17 @@ const closeModal = document.getElementById('close-modal');
 const modalBody = document.getElementById('modal-body');
 const printModalOrder = document.getElementById('print-modal-order');
 const dismissOrder = document.getElementById('dismiss-order');
+const currentVersionEl = document.getElementById('current-version');
+const availableVersionEl = document.getElementById('available-version');
+const updateReleaseNotesEl = document.getElementById('update-release-notes');
+const updateAvailableBox = document.getElementById('update-available-box');
+const updateStatusText = document.getElementById('update-status-text');
+const updateDownloadBtn = document.getElementById('update-download-btn');
+const updateInstallBtn = document.getElementById('update-install-btn');
+const checkUpdatesBtn = document.getElementById('check-updates-btn');
+const updateProgressWrap = document.getElementById('update-progress-wrap');
+const updateProgressFill = document.getElementById('update-progress-fill');
+const updateProgressText = document.getElementById('update-progress-text');
 
 // State
 let pendingOrders = [];
@@ -54,7 +68,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadAutoPrintStatus();
     await loadPrinters();
     await loadFontSize();
+    await loadPaperWidth();
     setupEventListeners();
+    setupUpdateListeners();
+    await initializeUpdatePanel();
 });
 
 // Restore state on startup (no auto-connect)
@@ -117,14 +134,49 @@ async function loadAutoPrintStatus() {
 }
 
 async function loadFontSize() {
-    if (!fontSizeSelect) return;
     try {
         const data = await window.electronAPI.getFontSize();
-        if (data && data.font_size) {
-            fontSizeSelect.value = data.font_size;
+        if (fontScaleSlider && data?.font_scale) {
+            fontScaleSlider.value = String(data.font_scale);
+        }
+        updateFontScaleLabel(data);
+        if (paperWidthSelect && data?.paper_width) {
+            paperWidthSelect.value = data.paper_width;
         }
     } catch (error) {
         console.error('Error loading font size:', error);
+    }
+}
+
+const FONT_SCALE_LABELS = {
+    1: 'Mínima',
+    2: 'Muito pequena',
+    3: 'Pequena',
+    4: 'Compacta',
+    5: 'Normal',
+    6: 'Média',
+    7: 'Média+',
+    8: 'Grande',
+    9: 'Muito grande',
+    10: 'Máxima',
+};
+
+function updateFontScaleLabel(data) {
+    if (!fontScaleValue) return;
+    const scale = Number(data?.font_scale || fontScaleSlider?.value || 5);
+    const label = data?.label || FONT_SCALE_LABELS[scale] || `Nível ${scale}`;
+    fontScaleValue.textContent = `${scale}/10 — ${label}`;
+}
+
+async function loadPaperWidth() {
+    if (!paperWidthSelect) return;
+    try {
+        const data = await window.electronAPI.getPaperWidth();
+        if (data?.paper_width) {
+            paperWidthSelect.value = data.paper_width;
+        }
+    } catch (error) {
+        console.error('Error loading paper width:', error);
     }
 }
 
@@ -162,11 +214,37 @@ function setupEventListeners() {
     });
     refreshPrintersBtn.addEventListener('click', loadPrinters);
 
-    if (fontSizeSelect) {
-        fontSizeSelect.addEventListener('change', async () => {
-            const size = fontSizeSelect.value;
-            await window.electronAPI.setFontSize(size);
-            showStatus(`Fonte: ${fontSizeSelect.options[fontSizeSelect.selectedIndex].textContent}`, 'success');
+    if (fontScaleSlider) {
+        fontScaleSlider.addEventListener('input', () => {
+            updateFontScaleLabel({ font_scale: Number(fontScaleSlider.value), label: null });
+        });
+        fontScaleSlider.addEventListener('change', async () => {
+            const scale = Number(fontScaleSlider.value);
+            const result = await window.electronAPI.setFontSize(scale);
+            updateFontScaleLabel(result);
+            showStatus(`Fonte: ${result.font_scale}/10 (${result.label})`, 'success');
+        });
+    }
+
+    if (printFontSampleBtn) {
+        printFontSampleBtn.addEventListener('click', async () => {
+            printFontSampleBtn.disabled = true;
+            try {
+                const result = await window.electronAPI.printFontSample();
+                showStatus(result.message || 'Amostra enviada para impressão', result.success ? 'success' : 'error');
+            } catch (error) {
+                showStatus('Erro ao imprimir amostra de fonte', 'error');
+            } finally {
+                printFontSampleBtn.disabled = false;
+            }
+        });
+    }
+
+    if (paperWidthSelect) {
+        paperWidthSelect.addEventListener('change', async () => {
+            const width = paperWidthSelect.value;
+            await window.electronAPI.setPaperWidth(width);
+            showStatus(`Papel: ${width === '80mm' ? '80mm' : '58mm'}`, 'success');
         });
     }
 
@@ -681,4 +759,127 @@ function updateLastActivity() {
     const now = new Date();
     const timeStr = now.toLocaleTimeString('pt-BR');
     lastActivity.textContent = `Última atividade: ${timeStr}`;
+}
+
+function formatFileSize(bytes) {
+    if (!bytes) return '';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+    }
+    return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function setUpdateProgress(percent) {
+    if (!updateProgressWrap || !updateProgressFill || !updateProgressText) return;
+    updateProgressWrap.classList.remove('hidden');
+    updateProgressFill.style.width = `${percent}%`;
+    updateProgressText.textContent = `${percent}%`;
+}
+
+function resetUpdateDownloadUi() {
+    if (updateProgressWrap) updateProgressWrap.classList.add('hidden');
+    if (updateProgressFill) updateProgressFill.style.width = '0%';
+    if (updateProgressText) updateProgressText.textContent = '0%';
+    if (updateDownloadBtn) {
+        updateDownloadBtn.disabled = false;
+        updateDownloadBtn.textContent = 'Baixar atualização';
+    }
+    if (updateInstallBtn) updateInstallBtn.classList.add('hidden');
+}
+
+async function initializeUpdatePanel() {
+    if (!currentVersionEl) return;
+    try {
+        const version = await window.electronAPI.getAppVersion();
+        currentVersionEl.textContent = version || '—';
+        if (updateStatusText) {
+            updateStatusText.textContent = 'Verificando atualizações...';
+        }
+        await window.electronAPI.checkForUpdates();
+    } catch (error) {
+        if (updateStatusText) {
+            updateStatusText.textContent = 'Não foi possível verificar atualizações';
+        }
+    }
+}
+
+function setupUpdateListeners() {
+    if (!window.electronAPI) return;
+
+    window.electronAPI.onUpdateAvailable((_event, data) => {
+        if (currentVersionEl) currentVersionEl.textContent = data.currentVersion || '—';
+        if (availableVersionEl) availableVersionEl.textContent = data.version || '—';
+        if (updateReleaseNotesEl) {
+            const notes = data.releaseNotes ? String(data.releaseNotes).trim() : '';
+            updateReleaseNotesEl.textContent = notes || 'Nova versão disponível.';
+        }
+        if (updateAvailableBox) updateAvailableBox.classList.remove('hidden');
+        if (updateStatusText) {
+            const sizeLabel = data.fileSize ? ` (${formatFileSize(data.fileSize)})` : '';
+            updateStatusText.textContent = `Atualização disponível${sizeLabel}`;
+        }
+        resetUpdateDownloadUi();
+    });
+
+    window.electronAPI.onUpdateNotAvailable((_event, data) => {
+        if (currentVersionEl) currentVersionEl.textContent = data.currentVersion || '—';
+        if (updateAvailableBox) updateAvailableBox.classList.add('hidden');
+        if (updateStatusText) {
+            updateStatusText.textContent = data.message || 'Você está na versão mais recente';
+        }
+    });
+
+    window.electronAPI.onUpdateDownloadProgress((_event, data) => {
+        setUpdateProgress(Number(data.percent || 0));
+        if (updateDownloadBtn) {
+            updateDownloadBtn.disabled = true;
+            updateDownloadBtn.textContent = 'Baixando...';
+        }
+    });
+
+    window.electronAPI.onUpdateDownloaded((_event, data) => {
+        setUpdateProgress(100);
+        if (updateDownloadBtn) {
+            updateDownloadBtn.disabled = true;
+            updateDownloadBtn.textContent = 'Download concluído';
+        }
+        if (updateInstallBtn) updateInstallBtn.classList.remove('hidden');
+        if (updateStatusText) {
+            updateStatusText.textContent = `Versão ${data.version} pronta para instalar`;
+        }
+    });
+
+    window.electronAPI.onUpdateError((_event, data) => {
+        resetUpdateDownloadUi();
+        if (updateStatusText) {
+            updateStatusText.textContent = data.message || 'Erro na atualização';
+        }
+    });
+
+    if (checkUpdatesBtn) {
+        checkUpdatesBtn.addEventListener('click', async () => {
+            if (updateStatusText) updateStatusText.textContent = 'Verificando atualizações...';
+            resetUpdateDownloadUi();
+            await window.electronAPI.checkForUpdates();
+        });
+    }
+
+    if (updateDownloadBtn) {
+        updateDownloadBtn.addEventListener('click', async () => {
+            resetUpdateDownloadUi();
+            if (updateStatusText) updateStatusText.textContent = 'Baixando atualização...';
+            await window.electronAPI.downloadUpdate();
+        });
+    }
+
+    if (updateInstallBtn) {
+        updateInstallBtn.addEventListener('click', async () => {
+            if (updateStatusText) updateStatusText.textContent = 'Instalando e reiniciando...';
+            await window.electronAPI.installUpdate();
+        });
+    }
 }
