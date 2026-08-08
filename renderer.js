@@ -11,8 +11,7 @@ const refreshPrintersBtn = document.getElementById('refresh-printers-btn');
 const connectionIndicator = document.getElementById('connection-indicator');
 const connectionText = document.getElementById('connection-text');
 const autoPrintToggle = document.getElementById('auto-print-toggle');
-const testPrinterBtn = document.getElementById('test-printer-btn');
-const fontScaleSlider = document.getElementById('font-scale-slider');
+const fontScaleSelect = document.getElementById('font-scale-select');
 const fontScaleValue = document.getElementById('font-scale-value');
 const printFontSampleBtn = document.getElementById('print-font-sample-btn');
 const paperWidthSelect = document.getElementById('paper-width-select');
@@ -64,36 +63,60 @@ function waitForConnection({ timeoutMs }) {
 
 // Initialize app
 document.addEventListener('DOMContentLoaded', async () => {
-    await tryAutoConnect();
-    await loadAutoPrintStatus();
-    await loadPrinters();
-    await loadFontSize();
-    await loadPaperWidth();
+    // Register UI handlers first so pairing works even if printer init is slow/fails
     setupEventListeners();
     setupUpdateListeners();
+    await tryAutoConnect();
+    await loadAutoPrintStatus();
+    await loadFontSize();
+    await loadPaperWidth();
     await initializeUpdatePanel();
+    // Printer list is optional — never block pairing/socket connect on it
+    loadPrinters().catch((error) => {
+        console.error('Error loading printers:', error);
+    });
 });
 
-// Restore state on startup (no auto-connect)
+// Restore state on startup and auto-reconnect when already paired
 async function tryAutoConnect() {
     try {
         const info = await window.electronAPI.getStoredDeviceInfo();
         isPaired = Boolean(info && info.paired);
-        if (isPaired) {
-            showApp();
-            updateConnectionStatus(false);
-            showStatus('Clique em Conectar para reconectar', 'info');
+        if (!isPaired) {
+            showLoginScreen();
             return;
         }
+
+        showApp();
+        updateConnectionStatus(false);
+        showStatus('Reconectando automaticamente...', 'info');
+
+        const result = await window.electronAPI.connectStoredDevice();
+        if (result && result.success) {
+            const connected = await waitForConnection({ timeoutMs: 8000 });
+            if (connected) {
+                showStatus('Conectado. Ouvindo pedidos...', 'success');
+                return;
+            }
+        }
+
+        // Keep pairing saved — user can retry with Conectar
+        updateConnectionStatus(false);
+        showStatus('Desconectado. Tentaremos de novo ou clique em Conectar.', 'error');
     } catch (error) {
         console.error('Auto-connect error:', error);
+        showLoginScreen();
     }
-    showLoginScreen();
 }
 
 // Load and populate printers list
 async function loadPrinters() {
+    if (refreshPrintersBtn) {
+        refreshPrintersBtn.disabled = true;
+        refreshPrintersBtn.textContent = 'Atualizando...';
+    }
     try {
+        showStatus('Buscando impressoras...', 'info');
         const [printersRes, selectedRes] = await Promise.all([
             window.electronAPI.listPrinters(),
             window.electronAPI.getSelectedPrinter()
@@ -117,9 +140,23 @@ async function loadPrinters() {
             opt.textContent = 'Nenhuma impressora encontrada';
             opt.disabled = true;
             printerSelect.appendChild(opt);
+            showStatus(
+                printersRes.success === false
+                    ? 'Não foi possível listar impressoras (verifique o Python).'
+                    : 'Nenhuma impressora encontrada no sistema.',
+                'error'
+            );
+        } else {
+            showStatus(`${printers.length} impressora(s) encontrada(s)`, 'success');
         }
     } catch (error) {
         console.error('Error loading printers:', error);
+        showStatus(`Erro ao listar impressoras: ${error.message}`, 'error');
+    } finally {
+        if (refreshPrintersBtn) {
+            refreshPrintersBtn.disabled = false;
+            refreshPrintersBtn.textContent = 'Atualizar Impressoras';
+        }
     }
 }
 
@@ -136,8 +173,8 @@ async function loadAutoPrintStatus() {
 async function loadFontSize() {
     try {
         const data = await window.electronAPI.getFontSize();
-        if (fontScaleSlider && data?.font_scale) {
-            fontScaleSlider.value = String(data.font_scale);
+        if (fontScaleSelect && data?.font_scale) {
+            fontScaleSelect.value = String(data.font_scale);
         }
         updateFontScaleLabel(data);
         if (paperWidthSelect && data?.paper_width) {
@@ -149,23 +186,21 @@ async function loadFontSize() {
 }
 
 const FONT_SCALE_LABELS = {
-    1: 'Mínima',
-    2: 'Muito pequena',
-    3: 'Pequena',
-    4: 'Compacta',
-    5: 'Normal',
-    6: 'Média',
-    7: 'Média+',
-    8: 'Grande',
-    9: 'Muito grande',
-    10: 'Máxima',
+    1: 'Muito pequena',
+    2: 'Pequena',
+    3: 'Compacta',
+    4: 'Normal',
+    5: 'Média',
+    6: 'Média+',
+    7: 'Grande',
+    8: 'Muito grande',
 };
 
 function updateFontScaleLabel(data) {
     if (!fontScaleValue) return;
-    const scale = Number(data?.font_scale || fontScaleSlider?.value || 5);
-    const label = data?.label || FONT_SCALE_LABELS[scale] || `Nível ${scale}`;
-    fontScaleValue.textContent = `${scale}/10 — ${label}`;
+    const scale = Number(data?.font_scale || fontScaleSelect?.value || 4);
+    const label = data?.label || FONT_SCALE_LABELS[scale] || 'Normal';
+    fontScaleValue.textContent = label;
 }
 
 async function loadPaperWidth() {
@@ -188,6 +223,21 @@ function showApp() {
 function showLoginScreen() {
     appSection.classList.add('hidden');
     loginSection.classList.remove('hidden');
+}
+
+function handleAccessRevoked(message) {
+    manualConnectAttempt = false;
+    isPaired = false;
+    isConnected = false;
+    pendingOrders = [];
+    updateOrdersList();
+    updateConnectionStatus(false);
+    if (pairCodeLoginInput) pairCodeLoginInput.value = '';
+    showLoginScreen();
+    showLoginStatus(
+        message || 'Acesso revogado. Gere um novo QR Code para vincular.',
+        'error'
+    );
 }
 
 // Setup event listeners
@@ -214,15 +264,15 @@ function setupEventListeners() {
     });
     refreshPrintersBtn.addEventListener('click', loadPrinters);
 
-    if (fontScaleSlider) {
-        fontScaleSlider.addEventListener('input', () => {
-            updateFontScaleLabel({ font_scale: Number(fontScaleSlider.value), label: null });
-        });
-        fontScaleSlider.addEventListener('change', async () => {
-            const scale = Number(fontScaleSlider.value);
+    if (fontScaleSelect) {
+        fontScaleSelect.addEventListener('change', async () => {
+            const scale = Number(fontScaleSelect.value);
             const result = await window.electronAPI.setFontSize(scale);
+            if (result?.font_scale) {
+                fontScaleSelect.value = String(result.font_scale);
+            }
             updateFontScaleLabel(result);
-            showStatus(`Fonte: ${result.font_scale}/10 (${result.label})`, 'success');
+            showStatus(`Fonte: ${result.label || FONT_SCALE_LABELS[scale]}`, 'success');
         });
     }
 
@@ -251,8 +301,6 @@ function setupEventListeners() {
     // Auto-print toggle
     autoPrintToggle.addEventListener('change', handleAutoPrintToggle);
 
-    // Test printer
-    testPrinterBtn.addEventListener('click', handleTestPrinter);
     if (clearAllOrdersBtn) {
         clearAllOrdersBtn.addEventListener('click', handleClearAllOrders);
     }
@@ -274,22 +322,23 @@ function setupEventListeners() {
         updateConnectionStatus(data.connected);
     });
 
+    window.electronAPI.onDeviceAccessRevoked((event, data) => {
+        handleAccessRevoked(data?.message);
+    });
+
     window.electronAPI.onWebSocketError((event, error) => {
         showStatus(`Erro de conexão: ${error}`, 'error');
         const message = String(error || '').toLowerCase();
         if (
-            manualConnectAttempt &&
-            (message.includes('revog') ||
-                message.includes('inválid') ||
-                message.includes('inval') ||
-                message.includes('autentic'))
+            message.includes('revog') ||
+            message.includes('inválid') ||
+            message.includes('invalido') ||
+            message.includes('unauthorized') ||
+            message.includes('não autoriz') ||
+            message.includes('nao autoriz')
         ) {
-            manualConnectAttempt = false;
             window.electronAPI.disconnectDevice().finally(() => {
-                isPaired = false;
-                updateConnectionStatus(false);
-                showLoginScreen();
-                showLoginStatus('Acesso revogado. Gere um novo QR Code para vincular.', 'error');
+                handleAccessRevoked('Acesso revogado. Gere um novo QR Code para vincular.');
             });
         }
     });
@@ -314,21 +363,35 @@ async function handlePairLogin() {
 
     pairLoginBtn.disabled = true;
     pairLoginBtn.textContent = 'Vinculando...';
+    manualConnectAttempt = true;
 
     try {
         const result = await window.electronAPI.claimPairCode(code, deviceName);
 
         if (result.success) {
             isPaired = true;
-            showLoginStatus('Vinculado!', 'success');
-            setTimeout(() => {
+            showLoginStatus('Código aceito. Conectando socket...', 'info');
+            const connected = await waitForConnection({ timeoutMs: 8000 });
+            if (connected) {
+                manualConnectAttempt = false;
+                showLoginStatus('Vinculado e conectado!', 'success');
+                setTimeout(() => {
+                    showApp();
+                    showStatus('Conectado. Ouvindo pedidos...', 'success');
+                }, 400);
+            } else {
+                manualConnectAttempt = false;
                 showApp();
-                showStatus('Conectado. Ouvindo pedidos...', 'success');
-            }, 600);
+                updateConnectionStatus(false);
+                showStatus('Vinculado, mas o socket não conectou. Clique em Conectar.', 'error');
+                showLoginStatus('Vinculado, mas sem conexão WebSocket. Tente Conectar.', 'error');
+            }
         } else {
+            manualConnectAttempt = false;
             showLoginStatus(`Erro: ${result.error}`, 'error');
         }
     } catch (error) {
+        manualConnectAttempt = false;
         showLoginStatus(`Erro: ${error.message}`, 'error');
     } finally {
         pairLoginBtn.disabled = false;
@@ -389,28 +452,6 @@ async function handleAutoPrintToggle() {
     } catch (error) {
         showStatus(`Erro ao alterar configuração: ${error.message}`, 'error');
         autoPrintToggle.checked = !autoPrintToggle.checked; // Revert
-    }
-}
-
-// Handle test printer
-async function handleTestPrinter() {
-    testPrinterBtn.disabled = true;
-    testPrinterBtn.textContent = 'Testando...';
-    
-    try {
-        const result = await window.electronAPI.testPrinter();
-        
-        if (result.success) {
-            const message = result.message || 'Teste de impressão enviado com sucesso!';
-            showStatus(message, 'success');
-        } else {
-            showStatus(`Erro no teste: ${result.error}`, 'error');
-        }
-    } catch (error) {
-        showStatus(`Erro no teste: ${error.message}`, 'error');
-    } finally {
-        testPrinterBtn.disabled = false;
-        testPrinterBtn.textContent = 'Testar Impressora';
     }
 }
 

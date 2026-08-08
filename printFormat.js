@@ -9,35 +9,51 @@ function getReceiptWidth(paperWidth) {
   return PAPER_WIDTHS[paperWidth === '80mm' ? '80mm' : '58mm'];
 }
 
+// 6–8 usam pipeline especial no printer.py (fatias GDI menores + render 1x).
+const ALLOWED_FONT_SCALES = [1, 2, 3, 4, 5, 6, 7, 8];
+const DEFAULT_FONT_SCALE = 4;
+
 const FONT_SCALE_LABELS = {
-  1: 'Mínima',
-  2: 'Muito pequena',
-  3: 'Pequena',
-  4: 'Compacta',
-  5: 'Normal',
-  6: 'Média',
-  7: 'Média+',
-  8: 'Grande',
-  9: 'Muito grande',
-  10: 'Máxima',
+  1: 'Muito pequena',
+  2: 'Pequena',
+  3: 'Compacta',
+  4: 'Normal',
+  5: 'Média',
+  6: 'Média+',
+  7: 'Grande',
+  8: 'Muito grande',
 };
+
+function snapFontScale(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_FONT_SCALE;
+  let best = ALLOWED_FONT_SCALES[0];
+  let bestDist = Math.abs(parsed - best);
+  for (const scale of ALLOWED_FONT_SCALES) {
+    const dist = Math.abs(parsed - scale);
+    if (dist < bestDist) {
+      best = scale;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
 
 function normalizeFontScale(value) {
   const legacyMap = {
     compact: 3,
-    normal: 5,
-    medium: 6,
-    medium_large: 8,
-    large: 9,
+    normal: 4,
+    medium: 5,
+    medium_large: 7,
+    large: 8,
   };
   if (typeof value === 'string' && legacyMap[value]) return legacyMap[value];
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return 5;
-  return Math.min(10, Math.max(1, Math.round(parsed)));
+  return snapFontScale(value);
 }
 
 function getFontScaleLabel(scale) {
-  return FONT_SCALE_LABELS[normalizeFontScale(scale)] || FONT_SCALE_LABELS[5];
+  const normalized = normalizeFontScale(scale);
+  return FONT_SCALE_LABELS[normalized] || FONT_SCALE_LABELS[DEFAULT_FONT_SCALE];
 }
 
 function formatMoneyBR(value) {
@@ -47,12 +63,12 @@ function formatMoneyBR(value) {
 }
 
 function formatSection(title, receiptWidth = 32) {
+  // Laterais curtas (máx. 3): preencher a largura inteira com '=' faz "ITENS DO PEDIDO" quebrar em 2 linhas na imagem.
   const label = String(title || '').trim().toUpperCase();
-  const inner = ` ${label} `;
-  const remaining = Math.max(0, receiptWidth - inner.length);
-  const left = Math.floor(remaining / 2);
-  const right = remaining - left;
-  return `${'='.repeat(left)}${inner}${'='.repeat(right)}`;
+  const maxSide = 3;
+  const room = Math.max(0, receiptWidth - label.length - 2);
+  const side = Math.max(1, Math.min(maxSide, Math.floor(room / 2)));
+  return `${'='.repeat(side)} ${label} ${'='.repeat(side)}`;
 }
 
 function formatDateTimeBR(dateStr) {
@@ -249,7 +265,10 @@ function formatItemBlock(item, index, receiptWidth = 32) {
   const lineTotal = unitTotal * qty;
   const unitLabel = qty === 1 ? '1 un' : `${qty} un`;
 
-  lines.push(`${unitLabel} ${itemName} (${formatMoneyBR(unitTotal)} - ${formatMoneyBR(lineTotal)})`);
+  lines.push({
+    text: `${unitLabel} ${itemName} (${formatMoneyBR(unitTotal)} - ${formatMoneyBR(lineTotal)})`,
+    style: 'bold',
+  });
 
   aggregateComplements(item?.complements).forEach((c) => {
     const linePrice = c.unitPrice * c.quantity;
@@ -287,48 +306,51 @@ function formatItemBlock(item, index, receiptWidth = 32) {
 
 function formatClientSection(order, receiptWidth = 32) {
   const lines = [];
+  const bold = (text) => ({ text, style: 'bold' });
   const orderType = String(order?.order_type || '').toLowerCase();
   const platform = getPlatformLabel(order?.platform);
   const customerName = order?.customer_name || order?.tab_customer_name;
   const customerPhone = order?.customer_phone;
 
   if (orderType === 'table') {
-    lines.push(formatSection('Mesa', receiptWidth));
-    if (order?.table_name) lines.push(`Mesa: ${order.table_name}`);
-    if (order?.waiter_name) lines.push(`Garçom: ${order.waiter_name}`);
-    if (customerName) lines.push(`Cliente: ${customerName}`);
-    if (order?.people_count) lines.push(`Pessoas: ${order.people_count}`);
+    lines.push(bold(formatSection('Mesa', receiptWidth)));
+    if (order?.table_name) lines.push(bold(`Mesa: ${order.table_name}`));
+    if (order?.waiter_name) lines.push(bold(`Garçom: ${order.waiter_name}`));
+    if (customerName) lines.push(bold(`Cliente: ${customerName}`));
+    if (order?.people_count) lines.push(bold(`Pessoas: ${order.people_count}`));
     return lines;
   }
 
   if (orderType === 'pickup') {
-    lines.push(formatSection('Retirada / Cliente', receiptWidth));
+    lines.push(bold(formatSection('Retirada / Cliente', receiptWidth)));
   } else {
-    lines.push(formatSection('Entrega / Cliente', receiptWidth));
+    lines.push(bold(formatSection('Entrega / Cliente', receiptWidth)));
   }
 
-  if (platform) lines.push(`Origem: ${platform}`);
-  if (customerName) lines.push(`Nome: ${customerName}`);
-  if (customerPhone) lines.push(`Telefone: ${customerPhone}`);
+  if (platform) lines.push(bold(`Origem: ${platform}`));
+  if (customerName) lines.push(bold(`Nome: ${customerName}`));
+  if (customerPhone) lines.push(bold(`Telefone: ${customerPhone}`));
   if (order?.customer_orders_count != null) {
-    lines.push(`Numero de pedidos: ${order.customer_orders_count}`);
+    lines.push(bold(`Numero de pedidos: ${order.customer_orders_count}`));
   }
 
   if (orderType === 'delivery') {
     if (order?.address_street) {
       const number = order?.address_number || 'S/N';
-      lines.push(`Endereco: ${order.address_street}, ${number}`);
+      lines.push(bold(`Endereco: ${order.address_street}, ${number}`));
     }
-    if (order?.address_neighborhood) lines.push(`Bairro: ${order.address_neighborhood}`);
-    if (order?.address_complement) lines.push(`Complemento: ${order.address_complement}`);
-    if (order?.address_city) lines.push(`Cidade: ${order.address_city}`);
-    if (order?.address_zip) lines.push(`CEP: ${order.address_zip}`);
+    if (order?.address_neighborhood) lines.push(bold(`Bairro: ${order.address_neighborhood}`));
+    if (order?.address_complement) lines.push(bold(`Complemento: ${order.address_complement}`));
+    if (order?.address_city) lines.push(bold(`Cidade: ${order.address_city}`));
+    if (order?.address_zip) lines.push(bold(`CEP: ${order.address_zip}`));
     if (order?.address_reference) {
-      wrapText(`Referencia: ${order.address_reference}`, receiptWidth).forEach((line) => lines.push(line));
+      wrapText(`Referencia: ${order.address_reference}`, receiptWidth).forEach((line) => {
+        lines.push(bold(line));
+      });
     }
   }
 
-  if (order?.driver?.name) lines.push(`Entregador: ${order.driver.name}`);
+  if (order?.driver?.name) lines.push(bold(`Entregador: ${order.driver.name}`));
 
   return lines;
 }
@@ -351,6 +373,10 @@ function createStyledReceipt(options = {}) {
     },
     pushAll(strings, style = 'normal') {
       (strings || []).forEach((entry) => {
+        if (entry && typeof entry === 'object' && entry.text != null) {
+          this.push(entry.text, entry.style || style);
+          return;
+        }
         if (entry === '') this.push('');
         else this.push(entry, style);
       });
@@ -443,7 +469,7 @@ function buildOrderReceipt(order, companyName, options = {}) {
   doc.push('');
   doc.push('');
 
-  return doc.toDocument({ kind: 'order' });
+  return doc.toDocument({ kind: 'order', header_title: 'NOVO PEDIDO' });
 }
 
 function buildTabReceipt(tabData, companyName, options = {}) {
@@ -500,7 +526,7 @@ function buildTabReceipt(tabData, companyName, options = {}) {
   doc.push('');
   doc.push('');
 
-  return doc.toDocument({ kind: 'tab' });
+  return doc.toDocument({ kind: 'tab', header_title: 'COMANDA' });
 }
 
 function buildFontSampleReceipt(scale, paperWidth = '58mm', options = {}) {
@@ -510,7 +536,7 @@ function buildFontSampleReceipt(scale, paperWidth = '58mm', options = {}) {
 
   doc.push(formatSection('Amostra de Fonte', receiptWidth), 'bold');
   doc.push(`ESTABELECIMENTO: Link Eats Demo`, 'title');
-  doc.push(`Tamanho: ${normalizeFontScale(scale)}/10 (${label})`);
+  doc.push(`Tamanho: ${label} (${normalizeFontScale(scale)})`);
   doc.push(`Papel: ${paperWidth === '80mm' ? '80mm' : '58mm'}`);
   doc.push('');
   doc.push('1 un HAMBURGUER (R$ 25,00 - R$ 25,00)');
@@ -525,7 +551,7 @@ function buildFontSampleReceipt(scale, paperWidth = '58mm', options = {}) {
   doc.push('ficar no tamanho ideal.');
   doc.push('');
 
-  return doc.toDocument({ kind: 'font_sample' });
+  return doc.toDocument({ kind: 'font_sample', header_title: 'NOVO PEDIDO' });
 }
 
 function formatOrderText(order, companyName, options = {}) {
@@ -551,4 +577,7 @@ module.exports = {
   normalizeFontScale,
   getFontScaleLabel,
   getReceiptWidth,
+  ALLOWED_FONT_SCALES,
+  DEFAULT_FONT_SCALE,
+  FONT_SCALE_LABELS,
 };

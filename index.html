@@ -62,8 +62,6 @@
                             <span>Impressão Automática</span>
                         </div>
 
-                        <button id="test-printer-btn" class="btn-secondary">Testar Impressora</button>
-
                         <h4>Impressora</h4>
                         <div class="form-group">
                             <select id="printer-select" style="width:100%;padding:8px;border:2px solid #e1e5e9;border-radius:8px;font-size:14px;">
@@ -75,15 +73,20 @@
                         <h4>Fonte</h4>
                         <div class="form-group font-scale-group">
                             <div class="font-scale-header">
-                                <span id="font-scale-value">5/10 — Normal</span>
+                                <span id="font-scale-value">Normal</span>
                             </div>
-                            <input id="font-scale-slider" type="range" min="1" max="10" step="1" value="5" class="font-scale-slider">
-                            <div class="font-scale-labels">
-                                <span>Pequena</span>
-                                <span>Grande</span>
-                            </div>
+                            <select id="font-scale-select" style="width:100%;padding:8px;border:2px solid #e1e5e9;border-radius:8px;font-size:14px;">
+                                <option value="1">Muito pequena</option>
+                                <option value="2">Pequena</option>
+                                <option value="3">Compacta</option>
+                                <option value="4" selected>Normal</option>
+                                <option value="5">Média</option>
+                                <option value="6">Média+</option>
+                                <option value="7">Grande</option>
+                                <option value="8">Muito grande</option>
+                            </select>
                             <button id="print-font-sample-btn" class="btn-secondary" style="width:100%;margin-top:8px;">Imprimir amostra de fonte</button>
-                            <small style="color:#888;display:block;margin-top:4px;">Impressão renderizada em imagem (controle pixel a pixel). Use a amostra para calibrar.</small>
+                            <small style="color:#888;display:block;margin-top:4px;">Só títulos em negrito. Use a amostra para escolher o tamanho ideal.</small>
                         </div>
 
                         <h4>Papel</h4>

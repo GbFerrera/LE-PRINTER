@@ -13,21 +13,37 @@ if hasattr(sys.stdin, 'reconfigure'):
     sys.stdin.reconfigure(encoding='utf-8')
 
 IS_WINDOWS = platform.system() == 'Windows'
+HAS_WIN32PRINT = False
+HAS_WIN32GUI = False
 if IS_WINDOWS:
     try:
         import win32print
+        import win32con
+        HAS_WIN32PRINT = True
     except ImportError:
-        IS_WINDOWS = False
+        pass
+    try:
+        import win32gui
+        HAS_WIN32GUI = True
+    except ImportError:
+        pass
 
 try:
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw, ImageFont, ImageEnhance
     HAS_PIL = True
 except ImportError:
     HAS_PIL = False
+    ImageEnhance = None
+
+try:
+    from PIL import ImageWin
+    HAS_IMAGEWIN = True
+except ImportError:
+    HAS_IMAGEWIN = False
 
 
 def listar_impressoras():
-    if not IS_WINDOWS:
+    if not HAS_WIN32PRINT:
         return []
     try:
         impressoras = win32print.EnumPrinters(win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS)
@@ -37,7 +53,7 @@ def listar_impressoras():
 
 
 def obter_impressora_padrao():
-    if not IS_WINDOWS:
+    if not HAS_WIN32PRINT:
         return None
     try:
         return win32print.GetDefaultPrinter()
@@ -59,13 +75,19 @@ def encode_para_impressora(texto):
     return normalizado.encode('ascii', errors='replace')
 
 
+# 1–5: GDI supersample. 6–8: caminho especial (ESC*/fatias) — POS58 falha em bitmap grande via GDI.
+ESCALAS_FONTE_PERMITIDAS = (1, 2, 3, 4, 5, 6, 7, 8)
+ESCALA_FONTE_PADRAO = 4
+ESCALA_GRANDE_MIN = 6  # a partir daqui usa pipeline de fonte grande
+
+
 def normalizar_escala_fonte(valor):
     mapa_legado = {
         'compact': 3,
-        'normal': 5,
-        'medium': 6,
-        'medium_large': 8,
-        'large': 9,
+        'normal': 4,
+        'medium': 5,
+        'medium_large': 7,
+        'large': 8,
     }
     if isinstance(valor, str):
         chave = valor.strip().lower()
@@ -74,27 +96,39 @@ def normalizar_escala_fonte(valor):
         try:
             valor = int(chave)
         except ValueError:
-            return 5
+            return ESCALA_FONTE_PADRAO
     try:
         escala = int(valor)
     except (TypeError, ValueError):
-        return 5
-    return max(1, min(10, escala))
+        return ESCALA_FONTE_PADRAO
+
+    melhor = ESCALAS_FONTE_PERMITIDAS[0]
+    melhor_dist = abs(escala - melhor)
+    for candidata in ESCALAS_FONTE_PERMITIDAS:
+        dist = abs(escala - candidata)
+        if dist < melhor_dist:
+            melhor = candidata
+            melhor_dist = dist
+    return melhor
 
 
 def obter_largura_imagem(paper_width):
     return 576 if str(paper_width).lower() == '80mm' else 384
 
 
-def calcular_tamanhos_fonte(font_scale):
+# Supersample 2x (prática comum em térmica/PIL) — nitidez sem MinFilter (que deixava tudo "negrito")
+RENDER_SCALE = 2
+
+
+def calcular_tamanhos_fonte(font_scale, render_scale=1):
     escala = normalizar_escala_fonte(font_scale)
-    normal = int(12 + escala * 2.6)
+    normal = max(8, int(round((12 + escala * 2.6) * render_scale)))
     return {
         'normal': normal,
-        'title': int(normal * 1.22),
-        'bold': int(normal * 1.06),
-        'total': int(normal * 1.18),
-        'blank': max(8, int(normal * 0.42)),
+        'title': max(8, int(round(normal * 1.22))),
+        'bold': max(8, int(round(normal * 1.06))),
+        'total': max(8, int(round(normal * 1.18))),
+        'blank': max(8, int(round(normal * 0.42))),
     }
 
 
@@ -124,6 +158,7 @@ def carregar_fontes(tamanhos):
 
     for bold_path, regular_path in _candidatos_fonte():
         if os.path.exists(bold_path) and os.path.exists(regular_path):
+            # title/bold/total = Arial Bold; corpo = regular
             return {
                 'normal': ImageFont.truetype(regular_path, tamanhos['normal']),
                 'title': ImageFont.truetype(bold_path, tamanhos['title']),
@@ -150,14 +185,34 @@ def _fonte_para_estilo(fontes, estilo):
     return fontes['normal']
 
 
+def _configurar_draw_termico(draw, mono=False):
+    """fontmode L no supersample; mono ('1') nas fontes grandes (traço sólido)."""
+    try:
+        draw.fontmode = '1' if mono else 'L'
+    except Exception:
+        pass
+    return draw
+
+
 def _largura_texto(texto, fonte, draw):
-    bbox = draw.textbbox((0, 0), texto, font=fonte)
+    bbox = draw.textbbox((0, 0), texto, font=fonte, anchor='lt')
     return max(0, bbox[2] - bbox[0])
 
 
 def _altura_linha(fonte, draw):
-    bbox = draw.textbbox((0, 0), 'Ag', font=fonte)
-    return max(12, bbox[3] - bbox[1])
+    try:
+        ascent, descent = fonte.getmetrics()
+        return max(12, int(ascent + descent + 2))
+    except Exception:
+        bbox = draw.textbbox((0, 0), 'AgÁy', font=fonte, anchor='lt')
+        return max(12, bbox[3] - bbox[1] + 2)
+
+
+def _desenhar_texto(draw, xy, texto, fonte, tamanho_px=20, negrito=False):
+    """Desenha texto. Negrito = fonte bold; sem stroke (stroke engrossa tudo)."""
+    _ = tamanho_px
+    _ = negrito
+    draw.text(xy, texto, font=fonte, fill=0, anchor='lt')
 
 
 def quebrar_texto(texto, fonte, draw, largura_max):
@@ -192,16 +247,18 @@ def quebrar_texto(texto, fonte, draw, largura_max):
     return linhas or ['']
 
 
-def _preparar_linhas_desenho(documento):
+def _preparar_linhas_desenho(documento, render_scale=RENDER_SCALE):
     paper_width = documento.get('paper_width', '58mm')
-    font_scale = documento.get('font_scale', 5)
-    img_width = obter_largura_imagem(paper_width)
-    margin_x = 12
+    font_scale = documento.get('font_scale', ESCALA_FONTE_PADRAO)
+    base_width = obter_largura_imagem(paper_width)
+    img_width = base_width * render_scale
+    margin_x = 12 * render_scale
     content_width = img_width - (margin_x * 2)
-    tamanhos = calcular_tamanhos_fonte(font_scale)
+    tamanhos = calcular_tamanhos_fonte(font_scale, render_scale=render_scale)
+    mono = render_scale <= 1
 
     temp_img = Image.new('L', (img_width, 200), 255)
-    draw = ImageDraw.Draw(temp_img)
+    draw = _configurar_draw_termico(ImageDraw.Draw(temp_img), mono=mono)
     fontes = carregar_fontes(tamanhos)
 
     desenho = []
@@ -214,114 +271,356 @@ def _preparar_linhas_desenho(documento):
             continue
 
         fonte = _fonte_para_estilo(fontes, estilo)
+        tamanho_px = {
+            'title': tamanhos['title'],
+            'bold': tamanhos['bold'],
+            'total': tamanhos['total'],
+        }.get(estilo, tamanhos['normal'])
+        negrito = estilo in ('title', 'bold', 'total')
+
         for linha in quebrar_texto(texto, fonte, draw, content_width):
             altura = _altura_linha(fonte, draw)
+            padding = max(4 * render_scale, int(tamanhos['normal'] * 0.20))
             desenho.append({
                 'kind': 'text',
                 'text': linha,
                 'font': fonte,
-                'height': altura + max(2, int(tamanhos['normal'] * 0.18)),
+                'size_px': tamanho_px,
+                'bold': negrito,
+                'height': altura + padding,
             })
 
-    return desenho, img_width, margin_x, tamanhos
+    return desenho, img_width, margin_x, tamanhos, base_width
 
 
-def _desenhar_logo(img, draw, logo_path, img_width, y_offset):
-    if not logo_path or not os.path.exists(logo_path) or not HAS_PIL:
-        return y_offset
+def _desenhar_cabecalho(img, draw, img_width, y_offset, titulo='NOVO PEDIDO', tamanhos=None, render_scale=RENDER_SCALE):
+    """Cabeçalho só com texto (sem logo) — ex: NOVO PEDIDO."""
+    _configurar_draw_termico(draw, mono=(render_scale <= 1))
+    margin_x = 12 * render_scale
+    titulo = str(titulo or 'NOVO PEDIDO').strip().upper() or 'NOVO PEDIDO'
 
-    try:
-        logo = Image.open(logo_path).convert('L')
-        largura_max = img_width - 24
-        w, h = logo.size
-        if w > largura_max:
-            h = max(1, int(h * largura_max / w))
-            w = largura_max
-            logo = logo.resize((w, h), Image.LANCZOS)
+    title_size = int((tamanhos or {}).get('title', 22))
+    header_size = max(16 * render_scale, min(30 * render_scale, int(title_size * 0.95)))
+    fontes_header = carregar_fontes({
+        'normal': header_size,
+        'title': header_size,
+        'bold': header_size,
+        'total': header_size,
+    })
+    fonte_titulo = fontes_header['title']
 
-        logo = logo.point(lambda x: 0 if x < 160 else 255, '1')
-        x = max(0, (img_width - w) // 2)
-        img.paste(logo, (x, y_offset))
-        return y_offset + h + 12
-    except Exception:
-        return y_offset
+    disponivel = max(40 * render_scale, img_width - (margin_x * 2))
+    text_width = _largura_texto(titulo, fonte_titulo, draw)
+    if text_width > disponivel:
+        menor = max(12 * render_scale, int(header_size * disponivel / text_width))
+        fontes_header = carregar_fontes({
+            'normal': menor, 'title': menor, 'bold': menor, 'total': menor,
+        })
+        fonte_titulo = fontes_header['title']
+        header_size = menor
+        text_width = _largura_texto(titulo, fonte_titulo, draw)
+
+    text_height = _altura_linha(fonte_titulo, draw)
+    text_x = max(margin_x, (img_width - text_width) // 2)
+    _desenhar_texto(draw, (text_x, y_offset), titulo, fonte_titulo, header_size, negrito=True)
+
+    linha_y = y_offset + text_height + (6 * render_scale)
+    draw.line((margin_x, linha_y, img_width - margin_x, linha_y), fill=0, width=max(1, render_scale))
+    return linha_y + (10 * render_scale)
+
+
+def _para_bitmap_termico(img, target_width=None):
+    """Pipeline usado por apps térmicos: contraste + nitidez + limiar (sem MinFilter).
+
+    MinFilter engrossava todos os pixels e parecia 'tudo em negrito'.
+    Supersample + limiar mantém títulos bold (fonte) e corpo normal.
+    """
+    if img.mode != 'L':
+        img = img.convert('L')
+
+    if ImageEnhance is not None:
+        img = ImageEnhance.Contrast(img).enhance(1.4)
+        img = ImageEnhance.Sharpness(img).enhance(1.8)
+
+    mono = img.point(lambda p: 0 if p < 145 else 255, 'L')
+
+    if target_width and mono.width != target_width:
+        new_h = max(1, int(round(mono.height * target_width / mono.width)))
+        mono = mono.resize((target_width, new_h), Image.Resampling.NEAREST if hasattr(Image, 'Resampling') else Image.NEAREST)
+
+    return mono.convert('1')
+
+
+def _render_scale_para_documento(documento):
+    """Fontes grandes: 1x + mono (GDI da POS58 costuma apagar supersample alto)."""
+    escala = normalizar_escala_fonte(documento.get('font_scale', ESCALA_FONTE_PADRAO))
+    return 1 if escala >= ESCALA_GRANDE_MIN else RENDER_SCALE
 
 
 def renderizar_cupom_imagem(documento, logo_path=None):
+    """Renderiza cupom em imagem (supersample 2x → limiar), sem logo."""
     if not HAS_PIL:
         raise RuntimeError('Pillow não instalado')
 
-    desenho, img_width, margin_x, tamanhos = _preparar_linhas_desenho(documento)
-    logo_reserva = 120 if logo_path and os.path.exists(logo_path) else 0
-    altura_estimada = logo_reserva + sum(
-        item['height'] if item['kind'] == 'text' else item['height']
-        for item in desenho
-    ) + 40
+    _ = logo_path
+    render_scale = _render_scale_para_documento(documento)
+    desenho, img_width, margin_x, tamanhos, base_width = _preparar_linhas_desenho(
+        documento, render_scale=render_scale
+    )
+    header_title = documento.get('header_title') or 'NOVO PEDIDO'
+    header_reserva = 80 * render_scale
+    altura_estimada = header_reserva + sum(item['height'] for item in desenho) + (100 * render_scale)
 
-    img = Image.new('L', (img_width, max(altura_estimada, 120)), 255)
-    draw = ImageDraw.Draw(img)
-    y = 8
-    y = _desenhar_logo(img, draw, logo_path, img_width, y)
+    mono = render_scale <= 1
+    img = Image.new('L', (img_width, max(altura_estimada, 200 * render_scale)), 255)
+    draw = _configurar_draw_termico(ImageDraw.Draw(img), mono=mono)
+    y = 8 * render_scale
+    y = _desenhar_cabecalho(
+        img, draw, img_width, y,
+        titulo=header_title,
+        tamanhos=tamanhos,
+        render_scale=render_scale,
+    )
 
     for item in desenho:
         if item['kind'] == 'blank':
             y += item['height']
             continue
-        draw.text((margin_x, y), item['text'], font=item['font'], fill=0)
+        if y + item['height'] + (20 * render_scale) > img.height:
+            nova = Image.new('L', (img_width, y + item['height'] + (160 * render_scale)), 255)
+            nova.paste(img, (0, 0))
+            img = nova
+            draw = _configurar_draw_termico(ImageDraw.Draw(img), mono=mono)
+        _desenhar_texto(
+            draw, (margin_x, y), item['text'], item['font'],
+            item.get('size_px', tamanhos['normal']),
+            negrito=bool(item.get('bold')),
+        )
         y += item['height']
 
-    img = img.crop((0, 0, img_width, min(y + 24, img.height)))
-    return img.convert('1')
+    img = img.crop((0, 0, img_width, min(y + (24 * render_scale), img.height)))
+    # Fontes grandes: limiar um pouco mais baixo para não “sumir” traços
+    if mono:
+        if img.mode != 'L':
+            img = img.convert('L')
+        if ImageEnhance is not None:
+            img = ImageEnhance.Contrast(img).enhance(1.5)
+            img = ImageEnhance.Sharpness(img).enhance(2.0)
+        img = img.point(lambda p: 0 if p < 170 else 255, 'L')
+        if img.width != base_width:
+            nearest = Image.Resampling.NEAREST if hasattr(Image, 'Resampling') else Image.NEAREST
+            new_h = max(1, int(round(img.height * base_width / img.width)))
+            img = img.resize((base_width, new_h), nearest)
+        return img.convert('1')
+    return _para_bitmap_termico(img, target_width=base_width)
 
 
-def imagem_para_escpos(img):
-    img = img.convert('1')
+# Fallback RAW: ESC * 8-dot double-density (m=1). GS v 0 / m=33 geram lixo em várias POS58.
+ESC_STAR_BAND_HEIGHT = 8
+ESC_STAR_MODE = 1
+
+
+def _pixel_preto(valor):
+    return valor == 0
+
+
+def _largura_max_imagem(paper_width='58mm'):
+    return 576 if str(paper_width).lower() == '80mm' else 384
+
+
+def _preparar_imagem_impressao(img, paper_width='58mm'):
+    """Normaliza imagem 1-bit na largura correta do papel (evita overflow → lixo)."""
+    max_w = _largura_max_imagem(paper_width)
+    if img.mode != '1':
+        img = _para_bitmap_termico(img, target_width=max_w)
+    w, h = img.size
+    if w > max_w:
+        novo_h = max(1, int(h * max_w / w))
+        nearest = Image.Resampling.NEAREST if hasattr(Image, 'Resampling') else Image.NEAREST
+        img = img.resize((max_w, novo_h), nearest).convert('1')
+    elif w < max_w:
+        canvas = Image.new('1', (max_w, h), 1)
+        canvas.paste(img, (0, 0))
+        img = canvas
+    # Altura múltipla de 8 — ESC * e vários drivers térmicos esperam isso
+    w, h = img.size
+    pad = (8 - (h % 8)) % 8
+    if pad:
+        canvas = Image.new('1', (w, h + pad), 1)
+        canvas.paste(img, (0, 0))
+        img = canvas
+    return img
+
+
+def imagem_para_escpos(img, paper_width='58mm'):
+    """Fallback RAW via ESC * m=1 (8 dots). Usado só se GDI falhar."""
+    img = _preparar_imagem_impressao(img, paper_width)
     largura, altura = img.size
-    width_bytes = (largura + 7) // 8
-    padded_width = width_bytes * 8
+    pix = img.load()
+    out = bytearray()
+    out += bytes([0x1B, 0x33, ESC_STAR_BAND_HEIGHT])
 
-    if padded_width != largura:
-        padded = Image.new('1', (padded_width, altura), 1)
-        padded.paste(img, (0, 0))
-        img = padded
-        largura = padded_width
-
-    pixels = []
-    for y in range(altura):
-        for x_byte in range(width_bytes):
+    for y0 in range(0, altura, ESC_STAR_BAND_HEIGHT):
+        nL = largura & 0xFF
+        nH = (largura >> 8) & 0xFF
+        out += bytes([0x1B, 0x2A, ESC_STAR_MODE, nL, nH])
+        for x in range(largura):
             byte = 0
             for bit in range(8):
-                x = x_byte * 8 + bit
-                if img.getpixel((x, y)) == 0:
-                    byte |= (1 << (7 - bit))
-            pixels.append(byte)
+                y = y0 + bit
+                if y < altura and _pixel_preto(pix[x, y]):
+                    byte |= (0x80 >> bit)
+            out.append(byte)
+        out += bytes([0x1B, 0x4A, ESC_STAR_BAND_HEIGHT])
 
-    xL = width_bytes & 0xFF
-    xH = (width_bytes >> 8) & 0xFF
-    yL = altura & 0xFF
-    yH = (altura >> 8) & 0xFF
-    return b'\x1d\x76\x30\x00' + bytes([xL, xH, yL, yH]) + bytes(pixels)
+    out += b'\x1b2'
+    return bytes(out)
+
+
+def imprimir_imagem_gdi(img, impressora_nome, paper_width='58mm', max_slice=None):
+    """Imprime bitmap via driver Windows (GDI / win32gui).
+
+    Fatias pequenas (max_slice) evitam página em branco em fontes grandes na POS58.
+    Não depende de win32ui/MFC (que costuma falhar sem mfc140).
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    if not (HAS_WIN32PRINT and HAS_WIN32GUI and HAS_PIL and HAS_IMAGEWIN):
+        raise RuntimeError('GDI indisponível (pywin32/Pillow)')
+
+    img = _preparar_imagem_impressao(img, paper_width)
+    # Preto puro / branco puro — sem cinza (driver térmico apaga meios-tons)
+    img_rgb = img.convert('L').point(lambda x: 0 if x < 160 else 255, 'L').convert('RGB')
+
+    class DOCINFO(ctypes.Structure):
+        _fields_ = [
+            ('cbSize', ctypes.c_int),
+            ('lpszDocName', wintypes.LPCWSTR),
+            ('lpszOutput', wintypes.LPCWSTR),
+            ('lpszDatatype', wintypes.LPCWSTR),
+            ('fwType', ctypes.c_uint),
+        ]
+
+    gdi32 = ctypes.windll.gdi32
+    hdc = win32gui.CreateDC('WINSPOOL', impressora_nome, None)
+    if not hdc:
+        raise RuntimeError(f'Não foi possível abrir DC da impressora {impressora_nome}')
+
+    try:
+        page_w = int(gdi32.GetDeviceCaps(hdc, win32con.HORZRES) or 0)
+        page_h = int(gdi32.GetDeviceCaps(hdc, win32con.VERTRES) or 0)
+        # VERTRES enorme + bitmap denso → driver “engole” o texto. Fatia pequena é a solução.
+        if max_slice is None:
+            max_slice = 1200
+        max_slice = max(64, int(max_slice))
+        if page_w <= 0:
+            page_w = img_rgb.size[0]
+        if page_h <= 0:
+            page_h = max_slice
+        page_h = min(page_h, max_slice)
+        # Alinha fatia a múltiplo de 8 (mais estável em térmica)
+        page_h = max(8, page_h - (page_h % 8))
+
+        src_w, src_h = img_rgb.size
+        # Evita stretch horizontal: usa largura nativa se couber (stretch apaga traços grandes)
+        if 0 < page_w < src_w:
+            target_w = page_w
+            target_h = max(1, int(src_h * target_w / max(src_w, 1)))
+            img_rgb = img_rgb.resize((target_w, target_h), Image.NEAREST)
+            img_rgb = img_rgb.convert('L').point(lambda x: 0 if x < 160 else 255, 'L').convert('RGB')
+        else:
+            target_w, target_h = src_w, src_h
+
+        gray = img_rgb.convert('L')
+        black_pixels = sum(1 for px in gray.histogram()[:128])
+        if black_pixels < 50:
+            raise RuntimeError(f'Bitmap sem texto (black_pixels={black_pixels})')
+
+        # Cupom cabe numa página: 1 StartDoc + 1 StartPage (multi-StartPage na POS58 = branco).
+        # Só se altura > page_h: vários documentos curtos (novo StartDoc por faixa).
+        def _job_faixa(faixa_img, h_draw):
+            di = DOCINFO(ctypes.sizeof(DOCINFO), 'Pedido Link Eats', None, None, 0)
+            if gdi32.StartDocW(hdc, ctypes.byref(di)) <= 0:
+                raise RuntimeError('StartDoc falhou')
+            try:
+                if gdi32.StartPage(hdc) <= 0:
+                    raise RuntimeError('StartPage falhou')
+                try:
+                    dib = ImageWin.Dib(faixa_img)
+                    dib.draw(hdc, (0, 0, target_w, h_draw))
+                finally:
+                    gdi32.EndPage(hdc)
+            finally:
+                gdi32.EndDoc(hdc)
+
+        if target_h <= page_h:
+            _job_faixa(img_rgb, target_h)
+            return 'gdi-single'
+        y = 0
+        while y < target_h:
+            slice_h = min(page_h, target_h - y)
+            faixa = img_rgb.crop((0, y, target_w, y + slice_h))
+            _job_faixa(faixa, slice_h)
+            y += slice_h
+        return 'gdi-multidoc'
+    finally:
+        win32gui.DeleteDC(hdc)
+
+
+def _imprimir_raw_escpos(dados, impressora_nome):
+    hPrinter = win32print.OpenPrinter(impressora_nome)
+    try:
+        hJob = win32print.StartDocPrinter(hPrinter, 1, ("Pedido Link Eats", None, "RAW"))
+        try:
+            win32print.StartPagePrinter(hPrinter)
+            win32print.WritePrinter(hPrinter, dados)
+            win32print.EndPagePrinter(hPrinter)
+        finally:
+            win32print.EndDocPrinter(hPrinter)
+    finally:
+        win32print.ClosePrinter(hPrinter)
+
+
+def _comandos_corte_papel():
+    """Avança o papel e aciona a guilhotina (GS V 0 — corte total)."""
+    return b'\n\n\n\n\n\n' + b'\x1d\x56\x00'
+
+
+def cortar_papel(impressora_nome):
+    """Envia corte via RAW (necessário após impressão GDI, que não manda ESC/POS)."""
+    if not HAS_WIN32PRINT or not impressora_nome:
+        return False
+    try:
+        _imprimir_raw_escpos(_comandos_corte_papel(), impressora_nome)
+        return True
+    except Exception as e:
+        print(f"Corte de papel falhou: {e}", flush=True)
+        return False
 
 
 def montar_dados_impressao_imagem(documento, logo_path=None):
-    img = renderizar_cupom_imagem(documento, logo_path)
-    raster = imagem_para_escpos(img)
-    inicio = b'\x1b@' + b'\x1ba\x00'
-    fim = b'\n\n\n\n\n\n\x1dV\x00'
+    img = renderizar_cupom_imagem(documento, None)
+    paper_width = documento.get('paper_width', '58mm')
+    raster = imagem_para_escpos(img, paper_width)
+    inicio = b'\x1b@' + b'\x1ba\x00' + b'\x1d!\x00' + b'\x1bE\x00'
+    fim = _comandos_corte_papel()
     return inicio + raster + fim
 
 
+# mag: nibble baixo = largura, nibble alto = altura (0 = 1x).
+# Evita double-width agressivo na POS58 (estoura linha e vira lixo).
 ESCALAS_FONTE = {
     1:  {'font_b': True,  'mag': 0x00, 'spacing': 16},
     2:  {'font_b': True,  'mag': 0x00, 'spacing': 20},
     3:  {'font_b': True,  'mag': 0x00, 'spacing': 24},
     4:  {'font_b': False, 'mag': 0x00, 'spacing': 28},
     5:  {'font_b': False, 'mag': 0x00, 'spacing': 32},
-    6:  {'font_b': False, 'mag': 0x01, 'spacing': 34},
-    7:  {'font_b': False, 'mag': 0x11, 'spacing': 36},
-    8:  {'font_b': False, 'mag': 0x11, 'spacing': 40},
-    9:  {'font_b': False, 'mag': 0x22, 'spacing': 44},
-    10: {'font_b': False, 'mag': 0x33, 'spacing': 48},
+    6:  {'font_b': False, 'mag': 0x10, 'spacing': 36},  # só altura 2x
+    7:  {'font_b': False, 'mag': 0x10, 'spacing': 40},
+    8:  {'font_b': False, 'mag': 0x11, 'spacing': 44},  # 2x2 — rewrap
+    9:  {'font_b': False, 'mag': 0x11, 'spacing': 48},
+    10: {'font_b': False, 'mag': 0x22, 'spacing': 52},
 }
 
 
@@ -330,37 +629,82 @@ def obter_config_fonte(font_size='normal'):
     return ESCALAS_FONTE.get(escala, ESCALAS_FONTE[5])
 
 
-def logo_para_escpos(logo_path, paper_width):
-    if not logo_path or not os.path.exists(logo_path) or not HAS_PIL:
-        return b''
-    try:
-        doc = {'paper_width': paper_width, 'font_scale': 5, 'lines': []}
-        img = renderizar_cupom_imagem(doc, logo_path)
-        return imagem_para_escpos(img) + b'\n'
-    except Exception:
-        return b''
+def _largura_chars_papel(paper_width, mag=0x00):
+    base = 48 if str(paper_width).lower() == '80mm' else 32
+    width_mult = (int(mag) & 0x0F) + 1
+    return max(8, base // width_mult)
+
+
+def _reflow_texto(texto, largura):
+    saida = []
+    for linha in str(texto or '').splitlines():
+        raw = linha.rstrip('\r')
+        if raw == '':
+            saida.append('')
+            continue
+        # Mantém linhas curtas; quebra as longas sem cortar no meio se possível
+        while len(raw) > largura:
+            corte = raw.rfind(' ', 0, largura + 1)
+            if corte <= 0:
+                corte = largura
+            saida.append(raw[:corte].rstrip())
+            raw = raw[corte:].lstrip()
+        saida.append(raw)
+    return '\n'.join(saida)
+
+
+def documento_para_texto(documento):
+    """Converte receipt estruturado em texto puro (sem bitmap/logo)."""
+    paper_width = documento.get('paper_width', '58mm')
+    font_scale = documento.get('font_scale', 5)
+    config = obter_config_fonte(font_scale)
+    largura = _largura_chars_papel(paper_width, config['mag'])
+
+    linhas = []
+    titulo = str(documento.get('header_title') or 'NOVO PEDIDO').strip().upper()
+    if titulo:
+        linhas.append(titulo)
+        linhas.append('=' * largura)
+
+    for item in documento.get('lines') or []:
+        estilo = item.get('style', 'normal')
+        texto = item.get('text', '')
+        if estilo == 'blank' or texto == '':
+            linhas.append('')
+            continue
+        linhas.append(str(texto))
+
+    return _reflow_texto('\n'.join(linhas) + '\n', largura)
 
 
 def montar_dados_impressao_texto(texto, font_size='normal', logo_path=None, paper_width='58mm'):
-    dados_texto = encode_para_impressora(texto)
-    logo_bytes = logo_para_escpos(logo_path, paper_width)
-
+    # Fallback texto (sem logo). Cupons estruturados usam renderização por imagem.
+    _ = logo_path
     config = obter_config_fonte(font_size)
+    largura = _largura_chars_papel(paper_width, config['mag'])
+    texto_ajustado = _reflow_texto(texto, largura)
+    dados_texto = encode_para_impressora(texto_ajustado)
+
     inicio = b'\x1b@' + b'\x1ba\x00'
     inicio += b'\x1bM\x01' if config['font_b'] else b'\x1bM\x00'
     inicio += bytes([0x1b, 0x33, config['spacing'] & 0xFF])
     inicio += bytes([0x1d, 0x21, config['mag'] & 0xFF])
     fim = b'\x1d!\x00\x1bE\x00\x1bM\x00\x1b2'
-    corte = b'\n\n\n\n\n\n\x1dV\x00'
-    return inicio + logo_bytes + dados_texto + fim + corte
+    return inicio + dados_texto + fim + _comandos_corte_papel()
 
 
 def imprimir_documento(documento, impressora_nome=None, logo_path=None):
-    if not IS_WINDOWS:
+    """Imprime cupom em imagem (controle fino da fonte), sem logo.
+
+    1–5: GDI fatias normais.
+    6–8: GDI em fatias bem menores (POS58 apaga bitmap denso em página alta);
+         se falhar, tenta fatias ainda menores e só então RAW ESC*.
+    """
+    if not HAS_WIN32PRINT:
         return {"success": False, "error": "Impressão real disponível apenas no Windows. Use modo simulação."}
 
     if not HAS_PIL:
-        return {"success": False, "error": "Pillow não instalado. Execute: pip install -r requirements.txt"}
+        return {"success": False, "error": "Pillow não instalado. Execute: pip install Pillow"}
 
     try:
         if not impressora_nome:
@@ -368,26 +712,46 @@ def imprimir_documento(documento, impressora_nome=None, logo_path=None):
         if not impressora_nome:
             return {"success": False, "error": "Nenhuma impressora disponível"}
 
-        dados = montar_dados_impressao_imagem(documento, logo_path)
-        hPrinter = win32print.OpenPrinter(impressora_nome)
-        try:
-            hJob = win32print.StartDocPrinter(hPrinter, 1, ("Pedido Link Eats", None, "RAW"))
-            try:
-                win32print.StartPagePrinter(hPrinter)
-                win32print.WritePrinter(hPrinter, dados)
-                win32print.EndPagePrinter(hPrinter)
-            finally:
-                win32print.EndDocPrinter(hPrinter)
-        finally:
-            win32print.ClosePrinter(hPrinter)
+        paper_width = documento.get('paper_width', '58mm')
+        escala = normalizar_escala_fonte(documento.get('font_scale', ESCALA_FONTE_PADRAO))
+        img = renderizar_cupom_imagem(documento, None)
 
-        return {"success": True, "message": f"Impresso em '{impressora_nome}'"}
+        # Uma página GDI por cupom. Vários StartPage (fatias) na POS58 saem em branco
+        # mesmo com success=True. Fontes 6–8 já renderizam em 1x (~500px), cabem numa página.
+        # Se a imagem for muito alta, fatia em jobs separados (StartDoc), não StartPage.
+        if HAS_IMAGEWIN and HAS_WIN32GUI:
+            try:
+                modo = imprimir_imagem_gdi(img, impressora_nome, paper_width, max_slice=2400)
+                cortou = cortar_papel(impressora_nome)
+                return {
+                    "success": True,
+                    "message": f"Impresso em '{impressora_nome}'",
+                    "mode": modo or "gdi",
+                    "font_scale": escala,
+                    "cut": cortou,
+                    "paper_width": paper_width,
+                }
+            except Exception as gdi_error:
+                print(f"GDI falhou, tentando RAW ESC*: {gdi_error}", flush=True)
+
+        # Fallback RAW já inclui avanço + GS V (corte) no final
+        dados = montar_dados_impressao_imagem(documento, None)
+        _imprimir_raw_escpos(dados, impressora_nome)
+
+        return {
+            "success": True,
+            "message": f"Impresso em '{impressora_nome}' (RAW)",
+            "mode": "raw",
+            "font_scale": escala,
+            "cut": True,
+            "paper_width": paper_width,
+        }
     except Exception as e:
         return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
 
 
 def imprimir_texto(texto, impressora_nome=None, font_size='normal', logo_path=None, paper_width='58mm'):
-    if not IS_WINDOWS:
+    if not HAS_WIN32PRINT:
         return {"success": False, "error": "Impressão real disponível apenas no Windows. Use modo simulação."}
 
     try:
@@ -401,7 +765,7 @@ def imprimir_texto(texto, impressora_nome=None, font_size='normal', logo_path=No
             hJob = win32print.StartDocPrinter(hPrinter, 1, ("Pedido Link Eats", None, "RAW"))
             try:
                 win32print.StartPagePrinter(hPrinter)
-                dados = montar_dados_impressao_texto(texto, font_size, logo_path, paper_width)
+                dados = montar_dados_impressao_texto(texto, font_size, None, paper_width)
                 win32print.WritePrinter(hPrinter, dados)
                 win32print.EndPagePrinter(hPrinter)
             finally:
@@ -428,7 +792,6 @@ def processar_comando(comando):
             return {"success": False, "error": "Nenhuma impressora padrão encontrada"}
 
         font_size = comando.get('font_scale', comando.get('font_size', 5))
-        logo_path = comando.get('logo_path')
         paper_width = comando.get('paper_width', '58mm')
         impressora = comando.get('printer')
         receipt = comando.get('receipt')
@@ -439,10 +802,10 @@ def processar_comando(comando):
                     receipt['font_scale'] = font_size
                 if not receipt.get('paper_width'):
                     receipt['paper_width'] = paper_width
-                return imprimir_documento(receipt, impressora, logo_path)
+                return imprimir_documento(receipt, impressora, None)
 
             texto = comando.get('text', '')
-            return imprimir_texto(texto, impressora, font_size, logo_path, paper_width)
+            return imprimir_texto(texto, impressora, font_size, None, paper_width)
 
         if action == 'test':
             if receipt and isinstance(receipt, dict) and receipt.get('lines'):
@@ -450,7 +813,7 @@ def processar_comando(comando):
                     receipt['font_scale'] = font_size
                 if not receipt.get('paper_width'):
                     receipt['paper_width'] = paper_width
-                return imprimir_documento(receipt, None, logo_path)
+                return imprimir_documento(receipt, None, None)
 
             texto_teste = comando.get('text') or (
                 "=== TESTE DE IMPRESSÃO ===\n"
@@ -458,7 +821,7 @@ def processar_comando(comando):
                 "Data: " + comando.get('date', '') + "\n"
                 "=========================="
             )
-            return imprimir_texto(texto_teste, None, font_size, logo_path, paper_width)
+            return imprimir_texto(texto_teste, None, font_size, None, paper_width)
 
         return {"success": False, "error": f"Ação desconhecida: {action}"}
 

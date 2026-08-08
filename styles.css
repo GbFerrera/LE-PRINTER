@@ -264,6 +264,7 @@ button:disabled {
     gap: 0;
     padding: 0;
     overflow: hidden;
+    min-height: 0;
     max-width: none;
     width: 100%;
 }
@@ -276,7 +277,11 @@ button:disabled {
     border-right: 1px solid #e9ecef;
     width: 300px;
     height: 100%;
+    min-height: 0;
     flex-shrink: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
 .settings-panel h3 {

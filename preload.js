@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // WebSocket events
   onWebSocketStatus: (callback) => ipcRenderer.on('websocket-status', callback),
   onWebSocketError: (callback) => ipcRenderer.on('websocket-error', callback),
+  onDeviceAccessRevoked: (callback) => ipcRenderer.on('device-access-revoked', callback),
   onNewOrder: (callback) => ipcRenderer.on('new-order', callback),
   onPrintResult: (callback) => ipcRenderer.on('print-result', callback),
 

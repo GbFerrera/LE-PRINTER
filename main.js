@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const Store = require('electron-store');
 const WebSocket = require('ws');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const fetch = require('node-fetch');
 const {
   formatOrderText,
@@ -15,6 +15,7 @@ const {
   documentToPlainText,
   normalizeFontScale,
   getFontScaleLabel,
+  DEFAULT_FONT_SCALE,
 } = require('./printFormat');
 
 // Configurações para resolver problemas no Windows
@@ -62,7 +63,7 @@ let printerReady = false;
 let reconnectTimer = null;
 let isConnecting = false;
 let selectedPrinter = null;
-let fontScale = normalizeFontScale(store.get('fontScale', store.get('fontSize', 5)));
+let fontScale = normalizeFontScale(store.get('fontScale', store.get('fontSize', DEFAULT_FONT_SCALE)));
 let paperWidth = store.get('paperWidth', '58mm') === '80mm' ? '80mm' : '58mm';
 const recentlyPrinted = new Set(); // deduplication guard
 
@@ -104,7 +105,8 @@ function buildPrinterCommandPayload(extra = {}) {
   return {
     font_scale: fontScale,
     paper_width: paperWidth,
-    logo_path: resolveLogoPath() || undefined,
+    printer: selectedPrinter || undefined,
+    // Logo removida; cupom em imagem (GDI) para controle da fonte em todos os tamanhos
     ...extra,
   };
 }
@@ -188,9 +190,76 @@ function createWindow() {
   });
 }
 
+function getPythonSearchDirs() {
+  const localAppData = process.env.LOCALAPPDATA || '';
+  const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+  return [
+    path.join(localAppData, 'Programs', 'Python', 'Python314'),
+    path.join(localAppData, 'Programs', 'Python', 'Python313'),
+    path.join(localAppData, 'Programs', 'Python', 'Python312'),
+    path.join(localAppData, 'Programs', 'Python', 'Python311'),
+    path.join(localAppData, 'Programs', 'Python', 'Python310'),
+    path.join(localAppData, 'Programs', 'Python', 'Launcher'),
+    path.join(programFiles, 'Python314'),
+    path.join(programFiles, 'Python313'),
+    path.join(programFiles, 'Python312'),
+    path.join(programFiles, 'Python311'),
+  ].filter((dir) => dir && fs.existsSync(dir));
+}
+
+function getAugmentedPath() {
+  const extra = getPythonSearchDirs().join(path.delimiter);
+  return [extra, process.env.PATH || ''].filter(Boolean).join(path.delimiter);
+}
+
+function resolvePythonCommand() {
+  const absoluteCandidates = getPythonSearchDirs().flatMap((dir) => [
+    path.join(dir, 'python.exe'),
+    path.join(dir, 'py.exe'),
+  ]);
+
+  const pathCandidates = process.platform === 'win32'
+    ? ['py', 'python', 'python3']
+    : ['python3', 'python'];
+
+  const candidates = [
+    ...absoluteCandidates.filter((p) => fs.existsSync(p)),
+    ...pathCandidates,
+  ];
+
+  const env = { ...process.env, PATH: getAugmentedPath() };
+
+  for (const cmd of candidates) {
+    // Skip Windows Store stub that only opens the Store page
+    if (typeof cmd === 'string' && cmd.toLowerCase().includes('\\windowsapps\\')) {
+      continue;
+    }
+    try {
+      const args = cmd.toLowerCase().endsWith('py.exe') || cmd === 'py'
+        ? ['-3', '--version']
+        : ['--version'];
+      const result = spawnSync(cmd, args, {
+        encoding: 'utf8',
+        timeout: 4000,
+        windowsHide: true,
+        env,
+      });
+      if (result.status === 0) {
+        console.log(`Python found: ${cmd}`);
+        return cmd;
+      }
+    } catch {}
+  }
+  return null;
+}
+
 // Initialize Python printer process
 function initializePrinter() {
   try {
+    if (printerProcess) {
+      return Boolean(printerReady);
+    }
+
     // Prefer native Windows EXE if available (packaged via PyInstaller)
     if (process.platform === 'win32') {
       const exeName = 'printer-win.exe';
@@ -208,35 +277,46 @@ function initializePrinter() {
 
     // Fallback to Python script if no EXE available
     if (!printerProcess) {
-      const pythonPath = process.platform === 'win32' ? 'python' : 'python3';
+      const pythonPath = resolvePythonCommand();
+      if (!pythonPath) {
+        console.log('Python not found — running in simulation mode');
+        printerReady = false;
+        return false;
+      }
       const scriptPath = app.isPackaged
         ? path.join(process.resourcesPath, 'printer.py')
         : path.join(__dirname, 'printer.py');
-      console.log(`Attempting to start Python printer with: ${pythonPath} ${scriptPath}`);
-      printerProcess = spawn(pythonPath, [scriptPath]);
+      const pythonArgs = (pythonPath.toLowerCase().endsWith('py.exe') || pythonPath === 'py')
+        ? ['-3', scriptPath]
+        : [scriptPath];
+      console.log(`Attempting to start Python printer with: ${pythonPath} ${pythonArgs.join(' ')}`);
+      printerProcess = spawn(pythonPath, pythonArgs, {
+        windowsHide: true,
+        env: { ...process.env, PATH: getAugmentedPath() },
+      });
     }
-    
+
     printerProcess.on('error', (error) => {
       console.error('Failed to start Python process:', error.message);
       console.log('Running in simulation mode - Python/pywin32 not available');
       printerReady = false;
       printerProcess = null;
     });
-    
+
     printerProcess.stdout.on('data', (data) => {
       console.log(`Printer output: ${data}`);
     });
-    
+
     printerProcess.stderr.on('data', (data) => {
       console.error(`Printer error: ${data}`);
     });
-    
+
     printerProcess.on('close', (code) => {
       console.log(`Printer process exited with code ${code}`);
       printerReady = false;
       printerProcess = null;
     });
-    
+
     printerReady = true;
     console.log('Printer process initialized successfully');
     return true;
@@ -251,33 +331,65 @@ function initializePrinter() {
 // Send command to Python printer
 function sendPrinterCommand(command) {
   return new Promise((resolve, reject) => {
-    if (!printerProcess || !printerReady) {
+    if (!printerProcess || !printerReady || !printerProcess.stdout || !printerProcess.stdin) {
       reject(new Error('Printer process not ready'));
       return;
     }
-    
+
+    const proc = printerProcess;
     let responseData = '';
-    
+    let settled = false;
+    let timeout = null;
+
+    const cleanup = () => {
+      if (timeout) clearTimeout(timeout);
+      if (proc.stdout) proc.stdout.removeListener('data', dataHandler);
+      proc.removeListener('close', onClose);
+      proc.removeListener('error', onError);
+    };
+
+    const finish = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      fn(arg);
+    };
+
     const dataHandler = (data) => {
       responseData += data.toString();
       try {
         const response = JSON.parse(responseData.trim());
-        printerProcess.stdout.removeListener('data', dataHandler);
-        resolve(response);
+        finish(resolve, response);
       } catch (e) {
         // Ainda não recebeu JSON completo
       }
     };
-    
-    printerProcess.stdout.on('data', dataHandler);
-    
-    // Timeout de 10 segundos
-    setTimeout(() => {
-      printerProcess.stdout.removeListener('data', dataHandler);
-      reject(new Error('Printer command timeout'));
+
+    const onClose = () => {
+      printerReady = false;
+      if (printerProcess === proc) printerProcess = null;
+      finish(reject, new Error('Printer process exited'));
+    };
+
+    const onError = (error) => {
+      printerReady = false;
+      if (printerProcess === proc) printerProcess = null;
+      finish(reject, error);
+    };
+
+    timeout = setTimeout(() => {
+      finish(reject, new Error('Printer command timeout'));
     }, 10000);
-    
-    printerProcess.stdin.write(JSON.stringify(command) + '\n');
+
+    proc.stdout.on('data', dataHandler);
+    proc.once('close', onClose);
+    proc.once('error', onError);
+
+    try {
+      proc.stdin.write(JSON.stringify(command) + '\n');
+    } catch (error) {
+      finish(reject, error);
+    }
   });
 }
 
@@ -335,6 +447,35 @@ async function loadCompanyName(companyIdToLoad) {
   return companyName
 }
 
+function clearDeviceSession() {
+  deviceToken = null;
+  deviceId = null;
+  companyId = null;
+  companyName = null;
+  store.delete('deviceToken');
+  store.delete('deviceId');
+  store.delete('companyId');
+  store.delete('companyName');
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+}
+
+function notifyAccessRevoked(reason) {
+  const message = reason || 'Acesso revogado';
+  console.log('🚫 Access revoked:', message);
+  clearDeviceSession();
+  if (ws) {
+    try { ws.terminate(); } catch {}
+    ws = null;
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('websocket-status', { connected: false });
+    mainWindow.webContents.send('device-access-revoked', { message });
+  }
+}
+
 // WebSocket connection (auth-printer)
 function connectWebSocket() {
   if (isConnecting) return;
@@ -389,19 +530,14 @@ function connectWebSocket() {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('websocket-status', { connected: true, companyId, deviceId });
         }
-      } else if (data.type === 'printer-auth-failed') {
-        console.log('❌ Printer auth failed:', data.payload?.message);
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('websocket-error', data.payload?.message || 'Falha ao autenticar');
-          mainWindow.webContents.send('websocket-status', { connected: false });
-        }
-        deviceToken = null;
-        deviceId = null;
-        companyId = null;
-        store.delete('deviceToken');
-        store.delete('deviceId');
-        store.delete('companyId');
-        try { socket.terminate(); } catch {}
+      } else if (
+        data.type === 'printer-auth-failed' ||
+        data.type === 'printer-revoked' ||
+        data.type === 'device-revoked' ||
+        data.type === 'printer-unpaired' ||
+        data.type === 'printer-removed'
+      ) {
+        notifyAccessRevoked(data.payload?.message || 'Acesso da impressora revogado');
       } else if (data.type === 'new-order') {
         console.log('🔔 New order received:', data.payload?.id);
         // Always show in UI list - print-order event handles actual printing
@@ -584,17 +720,7 @@ ipcMain.handle('claim-pair-code', async (_event, { code, deviceName }) => {
 });
 
 ipcMain.handle('disconnect-device', () => {
-  deviceToken = null;
-  deviceId = null;
-  companyId = null;
-  companyName = null;
-
-  store.delete('deviceToken');
-  store.delete('deviceId');
-  store.delete('companyId');
-  store.delete('companyName');
-
-  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  clearDeviceSession();
   if (ws) { try { ws.terminate(); } catch {} ws = null; }
   return { success: true };
 });
@@ -641,7 +767,7 @@ ipcMain.handle('set-font-size', (_event, size) => {
 });
 
 ipcMain.handle('get-font-size', () => {
-  fontScale = normalizeFontScale(store.get('fontScale', store.get('fontSize', 5)));
+  fontScale = normalizeFontScale(store.get('fontScale', store.get('fontSize', DEFAULT_FONT_SCALE)));
   return {
     font_scale: fontScale,
     font_size: String(fontScale),
