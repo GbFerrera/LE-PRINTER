@@ -36,6 +36,9 @@ const checkUpdatesBtn = document.getElementById('check-updates-btn');
 const updateProgressWrap = document.getElementById('update-progress-wrap');
 const updateProgressFill = document.getElementById('update-progress-fill');
 const updateProgressText = document.getElementById('update-progress-text');
+const headerUpdateBtn = document.getElementById('header-update-btn');
+let pendingUpdateVersion = null;
+let headerUpdatePhase = 'idle'; // idle | available | downloading | ready
 
 // State
 let pendingOrders = [];
@@ -814,11 +817,28 @@ function formatFileSize(bytes) {
     return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
 
+function setHeaderUpdateBtn({ visible, label, phase, disabled = false }) {
+    if (!headerUpdateBtn) return;
+    headerUpdatePhase = phase || 'idle';
+    headerUpdateBtn.classList.toggle('hidden', !visible);
+    headerUpdateBtn.classList.toggle('ready-install', phase === 'ready');
+    headerUpdateBtn.disabled = Boolean(disabled);
+    if (label) headerUpdateBtn.textContent = label;
+}
+
 function setUpdateProgress(percent) {
-    if (!updateProgressWrap || !updateProgressFill || !updateProgressText) return;
-    updateProgressWrap.classList.remove('hidden');
-    updateProgressFill.style.width = `${percent}%`;
-    updateProgressText.textContent = `${percent}%`;
+    const pct = Math.max(0, Math.min(100, Number(percent) || 0));
+    if (updateProgressWrap) updateProgressWrap.classList.remove('hidden');
+    if (updateProgressFill) updateProgressFill.style.width = `${pct}%`;
+    if (updateProgressText) updateProgressText.textContent = `${pct}%`;
+    if (headerUpdatePhase === 'downloading' || headerUpdatePhase === 'available') {
+        setHeaderUpdateBtn({
+            visible: true,
+            label: `Baixando ${pct}%`,
+            phase: 'downloading',
+            disabled: true,
+        });
+    }
 }
 
 function resetUpdateDownloadUi() {
@@ -833,18 +853,12 @@ function resetUpdateDownloadUi() {
 }
 
 async function initializeUpdatePanel() {
-    if (!currentVersionEl) return;
     try {
         const version = await window.electronAPI.getAppVersion();
-        currentVersionEl.textContent = version || '—';
-        if (updateStatusText) {
-            updateStatusText.textContent = 'Verificando atualizações...';
-        }
+        if (currentVersionEl) currentVersionEl.textContent = version || '—';
         await window.electronAPI.checkForUpdates();
     } catch (error) {
-        if (updateStatusText) {
-            updateStatusText.textContent = 'Não foi possível verificar atualizações';
-        }
+        console.error('Falha ao verificar atualizações:', error);
     }
 }
 
@@ -852,6 +866,7 @@ function setupUpdateListeners() {
     if (!window.electronAPI) return;
 
     window.electronAPI.onUpdateAvailable((_event, data) => {
+        pendingUpdateVersion = data.version || null;
         if (currentVersionEl) currentVersionEl.textContent = data.currentVersion || '—';
         if (availableVersionEl) availableVersionEl.textContent = data.version || '—';
         if (updateReleaseNotesEl) {
@@ -859,68 +874,76 @@ function setupUpdateListeners() {
             updateReleaseNotesEl.textContent = notes || 'Nova versão disponível.';
         }
         if (updateAvailableBox) updateAvailableBox.classList.remove('hidden');
-        if (updateStatusText) {
-            const sizeLabel = data.fileSize ? ` (${formatFileSize(data.fileSize)})` : '';
-            updateStatusText.textContent = `Atualização disponível${sizeLabel}`;
-        }
         resetUpdateDownloadUi();
+        setHeaderUpdateBtn({
+            visible: true,
+            label: pendingUpdateVersion ? `Atualizar v${pendingUpdateVersion}` : 'Atualizar',
+            phase: 'available',
+            disabled: false,
+        });
+        showStatus(`Nova versão ${pendingUpdateVersion || ''} disponível`, 'success');
     });
 
     window.electronAPI.onUpdateNotAvailable((_event, data) => {
+        pendingUpdateVersion = null;
         if (currentVersionEl) currentVersionEl.textContent = data.currentVersion || '—';
         if (updateAvailableBox) updateAvailableBox.classList.add('hidden');
-        if (updateStatusText) {
-            updateStatusText.textContent = data.message || 'Você está na versão mais recente';
-        }
+        setHeaderUpdateBtn({ visible: false, label: 'Atualizar', phase: 'idle' });
     });
 
     window.electronAPI.onUpdateDownloadProgress((_event, data) => {
         setUpdateProgress(Number(data.percent || 0));
-        if (updateDownloadBtn) {
-            updateDownloadBtn.disabled = true;
-            updateDownloadBtn.textContent = 'Baixando...';
-        }
     });
 
     window.electronAPI.onUpdateDownloaded((_event, data) => {
         setUpdateProgress(100);
-        if (updateDownloadBtn) {
-            updateDownloadBtn.disabled = true;
-            updateDownloadBtn.textContent = 'Download concluído';
-        }
-        if (updateInstallBtn) updateInstallBtn.classList.remove('hidden');
-        if (updateStatusText) {
-            updateStatusText.textContent = `Versão ${data.version} pronta para instalar`;
-        }
+        pendingUpdateVersion = data.version || pendingUpdateVersion;
+        setHeaderUpdateBtn({
+            visible: true,
+            label: pendingUpdateVersion ? `Instalar v${pendingUpdateVersion}` : 'Instalar e reiniciar',
+            phase: 'ready',
+            disabled: false,
+        });
+        showStatus(`Versão ${pendingUpdateVersion || ''} pronta para instalar`, 'success');
     });
 
     window.electronAPI.onUpdateError((_event, data) => {
         resetUpdateDownloadUi();
-        if (updateStatusText) {
-            updateStatusText.textContent = data.message || 'Erro na atualização';
+        if (pendingUpdateVersion) {
+            setHeaderUpdateBtn({
+                visible: true,
+                label: `Atualizar v${pendingUpdateVersion}`,
+                phase: 'available',
+                disabled: false,
+            });
+        } else {
+            setHeaderUpdateBtn({ visible: false, label: 'Atualizar', phase: 'idle' });
         }
+        showStatus(data.message || 'Erro na atualização', 'error');
     });
 
-    if (checkUpdatesBtn) {
-        checkUpdatesBtn.addEventListener('click', async () => {
-            if (updateStatusText) updateStatusText.textContent = 'Verificando atualizações...';
-            resetUpdateDownloadUi();
-            await window.electronAPI.checkForUpdates();
-        });
-    }
-
-    if (updateDownloadBtn) {
-        updateDownloadBtn.addEventListener('click', async () => {
-            resetUpdateDownloadUi();
-            if (updateStatusText) updateStatusText.textContent = 'Baixando atualização...';
-            await window.electronAPI.downloadUpdate();
-        });
-    }
-
-    if (updateInstallBtn) {
-        updateInstallBtn.addEventListener('click', async () => {
-            if (updateStatusText) updateStatusText.textContent = 'Instalando e reiniciando...';
-            await window.electronAPI.installUpdate();
+    if (headerUpdateBtn) {
+        headerUpdateBtn.addEventListener('click', async () => {
+            if (headerUpdatePhase === 'ready') {
+                setHeaderUpdateBtn({
+                    visible: true,
+                    label: 'Instalando...',
+                    phase: 'ready',
+                    disabled: true,
+                });
+                await window.electronAPI.installUpdate();
+                return;
+            }
+            if (headerUpdatePhase === 'available') {
+                resetUpdateDownloadUi();
+                setHeaderUpdateBtn({
+                    visible: true,
+                    label: 'Baixando 0%',
+                    phase: 'downloading',
+                    disabled: true,
+                });
+                await window.electronAPI.downloadUpdate();
+            }
         });
     }
 }

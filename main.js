@@ -69,7 +69,9 @@ const recentlyPrinted = new Set(); // deduplication guard
 
 function resolveAppIconPath() {
   const candidates = [
+    path.join(__dirname, 'icon.ico'),
     path.join(__dirname, 'public', 'icon.png'),
+    path.join(process.resourcesPath || '', 'icon.ico'),
     path.join(process.resourcesPath || '', 'public', 'icon.png'),
   ];
   return candidates.find((candidate) => candidate && fs.existsSync(candidate)) || null;
@@ -260,40 +262,45 @@ function initializePrinter() {
       return Boolean(printerReady);
     }
 
-    // Prefer native Windows EXE if available (packaged via PyInstaller)
-    if (process.platform === 'win32') {
-      const exeName = 'printer-win.exe';
-      const packagedExe = path.join(process.resourcesPath, 'bin', exeName);
-      const devExe = path.join(__dirname, 'bin', exeName);
-      const exePath = app.isPackaged && fs.existsSync(packagedExe)
-        ? packagedExe
-        : (fs.existsSync(devExe) ? devExe : null);
-
-      if (exePath) {
-        console.log(`Attempting to start bundled printer engine: ${exePath}`);
-        printerProcess = spawn(exePath, [], { windowsHide: true });
+    // Em desenvolvimento: sempre printer.py (senão o bin/printer-win.exe fica desatualizado).
+    // Empacotado: preferir printer-win.exe; fallback para Python se existir.
+    const wantBundledExe = app.isPackaged && process.platform === 'win32';
+    if (wantBundledExe) {
+      const packagedExe = path.join(process.resourcesPath, 'bin', 'printer-win.exe');
+      if (fs.existsSync(packagedExe)) {
+        console.log(`Attempting to start bundled printer engine: ${packagedExe}`);
+        printerProcess = spawn(packagedExe, [], { windowsHide: true });
       }
     }
 
-    // Fallback to Python script if no EXE available
     if (!printerProcess) {
       const pythonPath = resolvePythonCommand();
       if (!pythonPath) {
-        console.log('Python not found — running in simulation mode');
-        printerReady = false;
-        return false;
+        if (process.platform === 'win32') {
+          const devExe = path.join(__dirname, 'bin', 'printer-win.exe');
+          if (fs.existsSync(devExe)) {
+            console.log(`Python ausente — usando EXE local: ${devExe}`);
+            printerProcess = spawn(devExe, [], { windowsHide: true });
+          }
+        }
+        if (!printerProcess) {
+          console.log('Python not found — running in simulation mode');
+          printerReady = false;
+          return false;
+        }
+      } else {
+        const scriptPath = app.isPackaged
+          ? path.join(process.resourcesPath, 'printer.py')
+          : path.join(__dirname, 'printer.py');
+        const pythonArgs = (pythonPath.toLowerCase().endsWith('py.exe') || pythonPath === 'py')
+          ? ['-3', scriptPath]
+          : [scriptPath];
+        console.log(`Attempting to start Python printer with: ${pythonPath} ${pythonArgs.join(' ')}`);
+        printerProcess = spawn(pythonPath, pythonArgs, {
+          windowsHide: true,
+          env: { ...process.env, PATH: getAugmentedPath() },
+        });
       }
-      const scriptPath = app.isPackaged
-        ? path.join(process.resourcesPath, 'printer.py')
-        : path.join(__dirname, 'printer.py');
-      const pythonArgs = (pythonPath.toLowerCase().endsWith('py.exe') || pythonPath === 'py')
-        ? ['-3', scriptPath]
-        : [scriptPath];
-      console.log(`Attempting to start Python printer with: ${pythonPath} ${pythonArgs.join(' ')}`);
-      printerProcess = spawn(pythonPath, pythonArgs, {
-        windowsHide: true,
-        env: { ...process.env, PATH: getAugmentedPath() },
-      });
     }
 
     printerProcess.on('error', (error) => {
@@ -893,16 +900,8 @@ async function fetchLatestReleaseInfo() {
 }
 
 async function checkForUpdates({ silent = false } = {}) {
-  if (!app.isPackaged) {
-    if (!silent) {
-      notifyRenderer('update-not-available', {
-        currentVersion: app.getVersion(),
-        message: 'Modo desenvolvimento — atualização desativada'
-      });
-    }
-    return { available: false, reason: 'dev_mode' };
-  }
-
+  // Dev (npm start) também consulta a sandbox — útil para testar o endpoint/UI.
+  // O fluxo completo (baixar + instalar .exe) só faz sentido no app instalado (build).
   try {
     const data = await fetchLatestReleaseInfo();
     const currentVersion = app.getVersion();
@@ -922,24 +921,27 @@ async function checkForUpdates({ silent = false } = {}) {
         currentVersion,
         version: remoteVersion,
         releaseNotes: pendingUpdate.releaseNotes,
-        fileSize: pendingUpdate.fileSize
+        fileSize: pendingUpdate.fileSize,
+        packaged: app.isPackaged
       });
 
-      return { available: true, update: pendingUpdate };
+      return { available: true, update: pendingUpdate, packaged: app.isPackaged };
     }
 
     pendingUpdate = null;
     notifyRenderer('update-not-available', {
       currentVersion,
       version: remoteVersion || currentVersion,
-      message: 'Você está na versão mais recente'
+      message: app.isPackaged
+        ? 'Você está na versão mais recente'
+        : `Dev: sem update (local ${currentVersion}, remoto ${remoteVersion || '—'})`
     });
-    return { available: false };
+    return { available: false, packaged: app.isPackaged };
   } catch (err) {
     if (!silent) {
       notifyRenderer('update-error', { message: err.message || 'Erro ao verificar atualizações' });
     }
-    return { available: false, error: err.message };
+    return { available: false, error: err.message, packaged: app.isPackaged };
   }
 }
 
@@ -988,6 +990,12 @@ async function downloadPendingUpdate() {
 function installDownloadedUpdate() {
   if (!downloadedUpdatePath || !fs.existsSync(downloadedUpdatePath)) {
     throw new Error('Baixe a atualização antes de instalar');
+  }
+
+  // Em npm start, instalar o Setup.exe abre o instalador real — ok para teste,
+  // mas o fluxo oficial é: instalar um build antigo e atualizar nele.
+  if (!app.isPackaged) {
+    console.log('⚠️ Instalando update a partir do modo dev (teste). Preferível usar build instalado.');
   }
 
   const child = spawn(downloadedUpdatePath, ['/S', '/force'], {

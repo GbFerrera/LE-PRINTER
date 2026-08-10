@@ -45,6 +45,9 @@
                         <span id="connection-indicator" class="status-dot"></span>
                         <span id="connection-text">Desconectado</span>
                     </div>
+                    <button id="header-update-btn" class="header-update-btn hidden" type="button" title="Atualização disponível">
+                        Atualizar
+                    </button>
                 </div>
             </header>
 
@@ -99,30 +102,27 @@
 
                         <hr class="settings-divider">
 
-                        <h4>Atualização</h4>
-                        <div id="update-panel" class="update-panel">
-                            <p class="update-version-line">
-                                Versão atual: <strong id="current-version">—</strong>
-                            </p>
-                            <div id="update-available-box" class="update-available-box hidden">
-                                <p class="update-new-version">
-                                    Nova versão <strong id="available-version">—</strong>
-                                </p>
-                                <p id="update-release-notes" class="update-release-notes"></p>
-                                <div id="update-progress-wrap" class="update-progress-wrap hidden">
+                        <p class="update-version-line" style="margin-bottom:12px;">
+                            Versão: <strong id="current-version">—</strong>
+                        </p>
+                        <!-- Elementos ocultos mantidos para o fluxo de update no header -->
+                        <div id="update-panel" class="hidden" aria-hidden="true">
+                            <div id="update-available-box" class="hidden">
+                                <strong id="available-version">—</strong>
+                                <p id="update-release-notes"></p>
+                                <div id="update-progress-wrap" class="hidden">
                                     <div class="update-progress-bar">
                                         <div id="update-progress-fill" class="update-progress-fill"></div>
                                     </div>
-                                    <span id="update-progress-text" class="update-progress-text">0%</span>
+                                    <span id="update-progress-text">0%</span>
                                 </div>
-                                <button id="update-download-btn" class="btn-primary update-action-btn">Baixar atualização</button>
-                                <button id="update-install-btn" class="btn-primary update-action-btn hidden">Instalar e reiniciar</button>
+                                <button id="update-download-btn" type="button">Baixar</button>
+                                <button id="update-install-btn" class="hidden" type="button">Instalar</button>
                             </div>
-                            <p id="update-status-text" class="update-status-text">Verificando atualizações...</p>
-                            <button id="check-updates-btn" class="btn-secondary" style="width:100%;margin-top:8px;">Verificar atualizações</button>
+                            <p id="update-status-text" class="hidden"></p>
+                            <button id="check-updates-btn" class="hidden" type="button">Verificar</button>
                         </div>
 
-                        <hr class="settings-divider">
                         <button id="reconnect-device-btn" class="btn-secondary" style="width:100%">Conectar</button>
                     </div>
                     

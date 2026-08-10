@@ -251,6 +251,36 @@ button:disabled {
     background: #28a745;
 }
 
+.header-update-btn {
+    border: none;
+    background: #FB6900;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.header-update-btn:hover:not(:disabled) {
+    background: #e55f00;
+}
+
+.header-update-btn:disabled {
+    opacity: 0.75;
+    cursor: default;
+}
+
+.header-update-btn.ready-install {
+    background: #28a745;
+}
+
+.header-update-btn.ready-install:hover:not(:disabled) {
+    background: #218838;
+}
+
 .main-content {
     flex: 1;
     display: flex;

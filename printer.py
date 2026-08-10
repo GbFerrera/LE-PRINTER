@@ -415,34 +415,68 @@ def renderizar_cupom_imagem(documento, logo_path=None):
     return _para_bitmap_termico(img, target_width=base_width)
 
 
-# Fallback RAW: ESC * 8-dot double-density (m=1). GS v 0 / m=33 geram lixo em várias POS58.
+# POS58 barata: ESC * m=1. Elgin/Bematech etc.: GS v 0 (mais limpo, sem “risco” nas letras).
 ESC_STAR_BAND_HEIGHT = 8
 ESC_STAR_MODE = 1
+GS_V0_MAX_HEIGHT = 255
 
 
 def _pixel_preto(valor):
     return valor == 0
 
 
+def _impressora_escpos_nativa(impressora_nome):
+    """Impressoras que entendem ESC/POS de verdade (Elgin i9, etc.)."""
+    nome = str(impressora_nome or '').lower()
+    return any(k in nome for k in (
+        'elgin', 'i9', 'i7', 'i8', 'bematech', 'daruma', 'epson', 'tm-',
+    ))
+
+
+def _obter_horzres_impressora(impressora_nome):
+    if not (HAS_WIN32GUI and HAS_WIN32PRINT and impressora_nome):
+        return 0
+    import ctypes
+    try:
+        hdc = win32gui.CreateDC('WINSPOOL', impressora_nome, None)
+    except Exception:
+        return 0
+    if not hdc:
+        return 0
+    try:
+        return int(ctypes.windll.gdi32.GetDeviceCaps(hdc, win32con.HORZRES) or 0)
+    finally:
+        win32gui.DeleteDC(hdc)
+
+
+def detectar_paper_width_dispositivo(impressora_nome, preferido='58mm'):
+    """Alinha bobina à resolução real do driver (POS58 em Elgin reporta 384 even em 80mm)."""
+    horz = _obter_horzres_impressora(impressora_nome)
+    if horz >= 500:
+        return '80mm'
+    if horz >= 300:
+        return '58mm'
+    return '80mm' if str(preferido).lower() == '80mm' else '58mm'
+
+
 def _largura_max_imagem(paper_width='58mm'):
     return 576 if str(paper_width).lower() == '80mm' else 384
 
 
-def _preparar_imagem_impressao(img, paper_width='58mm'):
+def _preparar_imagem_impressao(img, paper_width='58mm', target_width=None):
     """Normaliza imagem 1-bit na largura correta do papel (evita overflow → lixo)."""
-    max_w = _largura_max_imagem(paper_width)
+    max_w = int(target_width) if target_width else _largura_max_imagem(paper_width)
+    max_w = max(96, max_w)
+    # Largura múltipla de 8 (raster ESC/POS)
+    max_w = max_w - (max_w % 8)
     if img.mode != '1':
         img = _para_bitmap_termico(img, target_width=max_w)
     w, h = img.size
-    if w > max_w:
-        novo_h = max(1, int(h * max_w / w))
+    if w != max_w:
+        novo_h = max(1, int(round(h * max_w / max(w, 1))))
         nearest = Image.Resampling.NEAREST if hasattr(Image, 'Resampling') else Image.NEAREST
         img = img.resize((max_w, novo_h), nearest).convert('1')
-    elif w < max_w:
-        canvas = Image.new('1', (max_w, h), 1)
-        canvas.paste(img, (0, 0))
-        img = canvas
-    # Altura múltipla de 8 — ESC * e vários drivers térmicos esperam isso
+    # Altura múltipla de 8 — ESC * / GS v 0
     w, h = img.size
     pad = (8 - (h % 8)) % 8
     if pad:
@@ -452,9 +486,9 @@ def _preparar_imagem_impressao(img, paper_width='58mm'):
     return img
 
 
-def imagem_para_escpos(img, paper_width='58mm'):
-    """Fallback RAW via ESC * m=1 (8 dots). Usado só se GDI falhar."""
-    img = _preparar_imagem_impressao(img, paper_width)
+def imagem_para_escpos_star(img, paper_width='58mm', target_width=None):
+    """RAW via ESC * m=1 (8 dots) — melhor em clones POS58."""
+    img = _preparar_imagem_impressao(img, paper_width, target_width=target_width)
     largura, altura = img.size
     pix = img.load()
     out = bytearray()
@@ -477,11 +511,92 @@ def imagem_para_escpos(img, paper_width='58mm'):
     return bytes(out)
 
 
+def imagem_para_escpos_gs_v0(img, paper_width='58mm', target_width=None):
+    """RAW via GS v 0 — Elgin i9 e compatíveis (letras limpas, sem risco no meio)."""
+    img = _preparar_imagem_impressao(img, paper_width, target_width=target_width)
+    largura, altura = img.size
+    width_bytes = (largura + 7) // 8
+    out = bytearray()
+
+    for y0 in range(0, altura, GS_V0_MAX_HEIGHT):
+        band_h = min(GS_V0_MAX_HEIGHT, altura - y0)
+        faixa = img.crop((0, y0, largura, y0 + band_h))
+        pix = faixa.load()
+        xL = width_bytes & 0xFF
+        xH = (width_bytes >> 8) & 0xFF
+        yL = band_h & 0xFF
+        yH = (band_h >> 8) & 0xFF
+        out += bytes([0x1D, 0x76, 0x30, 0x00, xL, xH, yL, yH])
+        for y in range(band_h):
+            for xb in range(width_bytes):
+                byte = 0
+                for bit in range(8):
+                    x = xb * 8 + bit
+                    if x < largura and _pixel_preto(pix[x, y]):
+                        byte |= (0x80 >> bit)
+                out.append(byte)
+    return bytes(out)
+
+
+def imagem_para_escpos(img, paper_width='58mm', target_width=None, nativa=False):
+    if nativa:
+        return imagem_para_escpos_gs_v0(img, paper_width, target_width=target_width)
+    return imagem_para_escpos_star(img, paper_width, target_width=target_width)
+
+
+def _devmode_retrato_termica(impressora_nome, paper_width='58mm'):
+    """Força Retrato + largura do bobina no DEVMODE (muitos drivers 80mm vêm em Landscape)."""
+    hprinter = win32print.OpenPrinter(impressora_nome)
+    try:
+        try:
+            info = win32print.GetPrinter(hprinter, 2)
+            dm = info.get('pDevMode')
+        except Exception:
+            dm = None
+        if dm is None:
+            return None
+
+        # 1 = portrait, 2 = landscape
+        try:
+            dm.Orientation = getattr(win32con, 'DMORIENT_PORTRAIT', 1)
+            fields = int(getattr(dm, 'Fields', 0) or 0)
+            fields |= getattr(win32con, 'DM_ORIENTATION', 0x1)
+            # Largura do papel em décimos de mm (80mm → 800)
+            is_80 = str(paper_width).lower() == '80mm'
+            dm.PaperWidth = 800 if is_80 else 580
+            dm.PaperLength = max(int(getattr(dm, 'PaperLength', 0) or 0), 3000)
+            dm.PaperSize = getattr(win32con, 'DMPAPER_USER', 256)
+            fields |= getattr(win32con, 'DM_PAPERWIDTH', 0x100)
+            fields |= getattr(win32con, 'DM_PAPERLENGTH', 0x200)
+            fields |= getattr(win32con, 'DM_PAPERSIZE', 0x2)
+            dm.Fields = fields
+        except Exception:
+            return None
+        return dm
+    finally:
+        win32print.ClosePrinter(hprinter)
+
+
+def _criar_dc_impressora(impressora_nome, paper_width='58mm'):
+    """Cria HDC com DEVMODE em retrato quando possível."""
+    dm = _devmode_retrato_termica(impressora_nome, paper_width)
+    hdc = None
+    if dm is not None:
+        try:
+            hdc = win32gui.CreateDC('WINSPOOL', impressora_nome, dm)
+        except Exception as e:
+            print(f'DC com DEVMODE falhou, fallback: {e}', flush=True)
+            hdc = None
+    if not hdc:
+        hdc = win32gui.CreateDC('WINSPOOL', impressora_nome, None)
+    return hdc
+
+
 def imprimir_imagem_gdi(img, impressora_nome, paper_width='58mm', max_slice=None):
     """Imprime bitmap via driver Windows (GDI / win32gui).
 
-    Fatias pequenas (max_slice) evitam página em branco em fontes grandes na POS58.
-    Não depende de win32ui/MFC (que costuma falhar sem mfc140).
+    Drivers 80mm costumam abrir DC em Landscape → cupom sai 'na horizontal'.
+    Aqui forçamos Retrato no DEVMODE e, se o eixo ainda vier trocado, rotacionamos o bitmap.
     """
     import ctypes
     from ctypes import wintypes
@@ -489,9 +604,15 @@ def imprimir_imagem_gdi(img, impressora_nome, paper_width='58mm', max_slice=None
     if not (HAS_WIN32PRINT and HAS_WIN32GUI and HAS_PIL and HAS_IMAGEWIN):
         raise RuntimeError('GDI indisponível (pywin32/Pillow)')
 
-    img = _preparar_imagem_impressao(img, paper_width)
-    # Preto puro / branco puro — sem cinza (driver térmico apaga meios-tons)
-    img_rgb = img.convert('L').point(lambda x: 0 if x < 160 else 255, 'L').convert('RGB')
+    # Usa largura real do driver (evita esticar 576→384 e “riscar” letra)
+    horz = _obter_horzres_impressora(impressora_nome)
+    expected_w = _largura_max_imagem(paper_width)
+    print_w = horz if horz >= 300 else expected_w
+    print_w = print_w - (print_w % 8)
+    img = _preparar_imagem_impressao(img, paper_width, target_width=print_w)
+    # 1-bit puro — RGB/halftone no GDI térmico causa risco no meio das letras
+    img_mono = img.convert('1')
+    expected_w = print_w
 
     class DOCINFO(ctypes.Structure):
         _fields_ = [
@@ -503,43 +624,71 @@ def imprimir_imagem_gdi(img, impressora_nome, paper_width='58mm', max_slice=None
         ]
 
     gdi32 = ctypes.windll.gdi32
-    hdc = win32gui.CreateDC('WINSPOOL', impressora_nome, None)
+    hdc = _criar_dc_impressora(impressora_nome, paper_width)
     if not hdc:
         raise RuntimeError(f'Não foi possível abrir DC da impressora {impressora_nome}')
 
     try:
         page_w = int(gdi32.GetDeviceCaps(hdc, win32con.HORZRES) or 0)
         page_h = int(gdi32.GetDeviceCaps(hdc, win32con.VERTRES) or 0)
-        # VERTRES enorme + bitmap denso → driver “engole” o texto. Fatia pequena é a solução.
+        print(
+            f'GDI caps paper={paper_width} HORZRES={page_w} VERTRES={page_h} expected_w={expected_w}',
+            flush=True,
+        )
+
+        # Landscape residual: largura do DC >> altura e a "altura" ≈ largura da bobina.
+        # Ex.: HORZRES=2000+, VERTRES≈576 → texto sai de lado na 80mm.
+        landscape_dc = (
+            page_w > 0 and page_h > 0
+            and page_w > page_h
+            and page_h <= int(expected_w * 1.35)
+        )
+        if landscape_dc:
+            print('GDI landscape detectado — rotacionando bitmap 90°', flush=True)
+            img_mono = img_mono.transpose(Image.ROTATE_90)
+
         if max_slice is None:
             max_slice = 1200
         max_slice = max(64, int(max_slice))
         if page_w <= 0:
-            page_w = img_rgb.size[0]
+            page_w = img_mono.size[0]
         if page_h <= 0:
             page_h = max_slice
-        page_h = min(page_h, max_slice)
-        # Alinha fatia a múltiplo de 8 (mais estável em térmica)
-        page_h = max(8, page_h - (page_h % 8))
 
-        src_w, src_h = img_rgb.size
-        # Evita stretch horizontal: usa largura nativa se couber (stretch apaga traços grandes)
-        if 0 < page_w < src_w:
-            target_w = page_w
-            target_h = max(1, int(src_h * target_w / max(src_w, 1)))
-            img_rgb = img_rgb.resize((target_w, target_h), Image.NEAREST)
-            img_rgb = img_rgb.convert('L').point(lambda x: 0 if x < 160 else 255, 'L').convert('RGB')
+        if landscape_dc:
+            slice_limit = min(page_w, max_slice)
         else:
-            target_w, target_h = src_w, src_h
+            slice_limit = min(page_h, max_slice)
+        slice_limit = max(8, slice_limit - (slice_limit % 8))
 
-        gray = img_rgb.convert('L')
-        black_pixels = sum(1 for px in gray.histogram()[:128])
+        src_w, src_h = img_mono.size
+        across = page_h if landscape_dc else page_w
+        if across <= 0:
+            across = expected_w
+
+        if landscape_dc:
+            if 0 < across < src_h:
+                target_h = across - (across % 8) if across >= 8 else across
+                target_w = max(1, int(src_w * target_h / max(src_h, 1)))
+                img_mono = img_mono.resize((target_w, target_h), Image.NEAREST).convert('1')
+            else:
+                target_w, target_h = src_w, src_h
+        else:
+            # 1:1 com HORZRES — stretch GDI é o que “risca” o meio da letra
+            if src_w != across and across > 0:
+                target_w = across - (across % 8) if across >= 8 else across
+                target_h = max(1, int(round(src_h * target_w / max(src_w, 1))))
+                img_mono = img_mono.resize((target_w, target_h), Image.NEAREST).convert('1')
+            else:
+                target_w, target_h = src_w, src_h
+
+        black_pixels = sum(1 for px in img_mono.convert('L').histogram()[:128])
         if black_pixels < 50:
             raise RuntimeError(f'Bitmap sem texto (black_pixels={black_pixels})')
 
-        # Cupom cabe numa página: 1 StartDoc + 1 StartPage (multi-StartPage na POS58 = branco).
-        # Só se altura > page_h: vários documentos curtos (novo StartDoc por faixa).
-        def _job_faixa(faixa_img, h_draw):
+        COLORONCOLOR = 3
+
+        def _job_faixa(faixa_img, box):
             di = DOCINFO(ctypes.sizeof(DOCINFO), 'Pedido Link Eats', None, None, 0)
             if gdi32.StartDocW(hdc, ctypes.byref(di)) <= 0:
                 raise RuntimeError('StartDoc falhou')
@@ -547,21 +696,37 @@ def imprimir_imagem_gdi(img, impressora_nome, paper_width='58mm', max_slice=None
                 if gdi32.StartPage(hdc) <= 0:
                     raise RuntimeError('StartPage falhou')
                 try:
-                    dib = ImageWin.Dib(faixa_img)
-                    dib.draw(hdc, (0, 0, target_w, h_draw))
+                    try:
+                        gdi32.SetStretchBltMode(hdc, COLORONCOLOR)
+                    except Exception:
+                        pass
+                    dib = ImageWin.Dib(faixa_img.convert('1'))
+                    dib.draw(hdc, box)
                 finally:
                     gdi32.EndPage(hdc)
             finally:
                 gdi32.EndDoc(hdc)
 
-        if target_h <= page_h:
-            _job_faixa(img_rgb, target_h)
+        if landscape_dc:
+            if target_w <= slice_limit:
+                _job_faixa(img_mono, (0, 0, target_w, target_h))
+                return 'gdi-single-landscape'
+            x = 0
+            while x < target_w:
+                slice_w = min(slice_limit, target_w - x)
+                faixa = img_mono.crop((x, 0, x + slice_w, target_h))
+                _job_faixa(faixa, (0, 0, slice_w, target_h))
+                x += slice_w
+            return 'gdi-multidoc-landscape'
+
+        if target_h <= slice_limit:
+            _job_faixa(img_mono, (0, 0, target_w, target_h))
             return 'gdi-single'
         y = 0
         while y < target_h:
-            slice_h = min(page_h, target_h - y)
-            faixa = img_rgb.crop((0, y, target_w, y + slice_h))
-            _job_faixa(faixa, slice_h)
+            slice_h = min(slice_limit, target_h - y)
+            faixa = img_mono.crop((0, y, target_w, y + slice_h))
+            _job_faixa(faixa, (0, 0, target_w, slice_h))
             y += slice_h
         return 'gdi-multidoc'
     finally:
@@ -599,10 +764,21 @@ def cortar_papel(impressora_nome):
         return False
 
 
-def montar_dados_impressao_imagem(documento, logo_path=None):
-    img = renderizar_cupom_imagem(documento, None)
+def montar_dados_impressao_imagem(documento, logo_path=None, impressora_nome=None):
     paper_width = documento.get('paper_width', '58mm')
-    raster = imagem_para_escpos(img, paper_width)
+    nativa = _impressora_escpos_nativa(impressora_nome)
+    horz = _obter_horzres_impressora(impressora_nome) if impressora_nome else 0
+    target_w = horz if horz >= 300 else None
+    if target_w:
+        # Re-render na largura real do dispositivo evita squash 576→384
+        efetivo = detectar_paper_width_dispositivo(impressora_nome, paper_width)
+        doc2 = dict(documento)
+        doc2['paper_width'] = efetivo
+        img = renderizar_cupom_imagem(doc2, None)
+        paper_width = efetivo
+    else:
+        img = renderizar_cupom_imagem(documento, None)
+    raster = imagem_para_escpos(img, paper_width, target_width=target_w, nativa=nativa)
     inicio = b'\x1b@' + b'\x1ba\x00' + b'\x1d!\x00' + b'\x1bE\x00'
     fim = _comandos_corte_papel()
     return inicio + raster + fim
@@ -712,13 +888,30 @@ def imprimir_documento(documento, impressora_nome=None, logo_path=None):
         if not impressora_nome:
             return {"success": False, "error": "Nenhuma impressora disponível"}
 
-        paper_width = documento.get('paper_width', '58mm')
+        preferido = documento.get('paper_width', '58mm')
+        paper_width = detectar_paper_width_dispositivo(impressora_nome, preferido)
         escala = normalizar_escala_fonte(documento.get('font_scale', ESCALA_FONTE_PADRAO))
-        img = renderizar_cupom_imagem(documento, None)
+        doc_print = dict(documento)
+        doc_print['paper_width'] = paper_width
+        nativa = _impressora_escpos_nativa(impressora_nome)
+        img = renderizar_cupom_imagem(doc_print, None)
 
-        # Uma página GDI por cupom. Vários StartPage (fatias) na POS58 saem em branco
-        # mesmo com success=True. Fontes 6–8 já renderizam em 1x (~500px), cabem numa página.
-        # Se a imagem for muito alta, fatia em jobs separados (StartDoc), não StartPage.
+        # Elgin/i9: RAW GS v 0 primeiro (GDI+driver POS58 “risca” o meio das letras)
+        if nativa:
+            try:
+                dados = montar_dados_impressao_imagem(doc_print, None, impressora_nome)
+                _imprimir_raw_escpos(dados, impressora_nome)
+                return {
+                    "success": True,
+                    "message": f"Impresso em '{impressora_nome}' (ESC/POS)",
+                    "mode": "raw-gsv0",
+                    "font_scale": escala,
+                    "cut": True,
+                    "paper_width": paper_width,
+                }
+            except Exception as raw_error:
+                print(f"RAW Elgin falhou, tentando GDI: {raw_error}", flush=True)
+
         if HAS_IMAGEWIN and HAS_WIN32GUI:
             try:
                 modo = imprimir_imagem_gdi(img, impressora_nome, paper_width, max_slice=2400)
@@ -734,8 +927,7 @@ def imprimir_documento(documento, impressora_nome=None, logo_path=None):
             except Exception as gdi_error:
                 print(f"GDI falhou, tentando RAW ESC*: {gdi_error}", flush=True)
 
-        # Fallback RAW já inclui avanço + GS V (corte) no final
-        dados = montar_dados_impressao_imagem(documento, None)
+        dados = montar_dados_impressao_imagem(doc_print, None, impressora_nome)
         _imprimir_raw_escpos(dados, impressora_nome)
 
         return {

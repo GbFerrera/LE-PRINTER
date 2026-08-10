@@ -1,6 +1,6 @@
 {
   "name": "link-eats-printer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Electron app for automatic order printing via WebSocket",
   "main": "main.js",
   "scripts": {
@@ -8,9 +8,9 @@
     "dev": "npx electron . --dev",
     "build": "electron-builder",
     "dist": "electron-builder --publish=never",
-    "build:win": "electron-builder --win nsis --publish=never",
+    "build:win": "electron-builder --win dir --publish=never && powershell -ExecutionPolicy Bypass -File scripts/apply-win-icon.ps1 && electron-builder --win nsis --prepackaged dist/win-unpacked --publish=never",
     "build:win:portable": "electron-builder --win portable --publish=never",
-    "build:win:all": "npm run build:printer:win && npm run build:win:portable && npm run build:win",
+    "build:win:all": "npm run build:printer:win && npm run build:win",
     "build:printer:win": "scripts\\\\build-printer-win.bat",
     "pack:win:x64": "electron-packager . \"Link Eats Printer\" --platform=win32 --arch=x64 --out=dist-pack --overwrite --no-version",
     "pack:win:arm64": "electron-packager . \"Link Eats Printer\" --platform=win32 --arch=arm64 --out=dist-pack --overwrite",
@@ -66,13 +66,17 @@
     ],
     "win": {
       "target": "nsis",
-      "icon": "icon.ico"
+      "icon": "icon.ico",
+      "signAndEditExecutable": false
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "installerIcon": "icon.ico",
+      "uninstallerIcon": "icon.ico",
+      "installerHeaderIcon": "icon.ico"
     }
   }
 }

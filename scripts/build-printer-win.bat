@@ -29,6 +29,13 @@ if exist build rmdir /s /q build
   --hidden-import=PIL.Image ^
   --hidden-import=PIL.ImageDraw ^
   --hidden-import=PIL.ImageFont ^
+  --hidden-import=PIL.ImageEnhance ^
+  --hidden-import=PIL.ImageWin ^
+  --hidden-import=win32print ^
+  --hidden-import=win32gui ^
+  --hidden-import=win32con ^
+  --hidden-import=win32ui ^
+  --collect-all=pywin32 ^
   printer.py
 if %errorlevel% neq 0 (
   echo ERRO: Falha ao gerar o executavel com PyInstaller.
