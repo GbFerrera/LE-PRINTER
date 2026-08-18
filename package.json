@@ -14,7 +14,9 @@
     "build:printer:win": "scripts\\\\build-printer-win.bat",
     "pack:win:x64": "electron-packager . \"Link Eats Printer\" --platform=win32 --arch=x64 --out=dist-pack --overwrite --no-version",
     "pack:win:arm64": "electron-packager . \"Link Eats Printer\" --platform=win32 --arch=arm64 --out=dist-pack --overwrite",
-    "pack:win:ia32": "electron-packager . \"Link Eats Printer\" --platform=win32 --arch=ia32 --out=dist-pack --overwrite"
+    "pack:win:ia32": "electron-packager . \"Link Eats Printer\" --platform=win32 --arch=ia32 --out=dist-pack --overwrite",
+    "scale:list-ports": "node scripts/simulate-scale-serial.js --list",
+    "scale:sim-com": "node scripts/simulate-scale-serial.js"
   },
   "keywords": [
     "electron",
@@ -25,14 +27,15 @@
   "author": "Link Eats",
   "license": "MIT",
   "devDependencies": {
-"electron": "22.3.27",
+    "electron": "22.3.27",
     "electron-builder": "^24.9.1",
-    "electron-winstaller": "^5.4.0",
-    "electron-packager": "^17.1.2"
+    "electron-packager": "^17.1.2",
+    "electron-winstaller": "^5.4.0"
   },
   "dependencies": {
     "electron-store": "^8.1.0",
     "node-fetch": "^2.7.0",
+    "serialport": "^12.0.0",
     "ws": "^8.16.0"
   },
   "build": {
@@ -57,6 +60,7 @@
       "index.html",
       "styles.css",
       "preload.js",
+      "scale/**/*",
       "public/**/*",
       "!printer.py",
       "!**/*.pyc",

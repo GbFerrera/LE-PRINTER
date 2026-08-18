@@ -37,6 +37,23 @@ const updateProgressWrap = document.getElementById('update-progress-wrap');
 const updateProgressFill = document.getElementById('update-progress-fill');
 const updateProgressText = document.getElementById('update-progress-text');
 const headerUpdateBtn = document.getElementById('header-update-btn');
+const scaleWeightDisplay = document.getElementById('scale-weight-display');
+const scaleWeightValue = document.getElementById('scale-weight-value');
+const scaleStableBadge = document.getElementById('scale-stable-badge');
+const scaleModeLabel = document.getElementById('scale-mode-label');
+const scalePortSelect = document.getElementById('scale-port-select');
+const scaleRefreshPortsBtn = document.getElementById('scale-refresh-ports-btn');
+const scaleConnectBtn = document.getElementById('scale-connect-btn');
+const scaleStopBtn = document.getElementById('scale-stop-btn');
+const scaleProtocolHint = document.getElementById('scale-protocol-hint');
+const scaleDetectedInfo = document.getElementById('scale-detected-info');
+const scalePriceInput = document.getElementById('scale-price-input');
+const scaleSendPriceBtn = document.getElementById('scale-send-price-btn');
+const scalePriceDisplay = document.getElementById('scale-price-display');
+const scaleTotalDisplay = document.getElementById('scale-total-display');
+const scalePrintBtn = document.getElementById('scale-print-btn');
+let lastScaleReading = { kg: 0, pricePerKg: 0, total: 0, stable: false };
+let lastScalePortPath = '';
 let pendingUpdateVersion = null;
 let headerUpdatePhase = 'idle'; // idle | available | downloading | ready
 
@@ -69,10 +86,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Register UI handlers first so pairing works even if printer init is slow/fails
     setupEventListeners();
     setupUpdateListeners();
+    setupScaleListeners();
+    setupAppTabs();
     await tryAutoConnect();
     await loadAutoPrintStatus();
     await loadFontSize();
     await loadPaperWidth();
+    await loadScalePanel();
     await initializeUpdatePanel();
     // Printer list is optional — never block pairing/socket connect on it
     loadPrinters().catch((error) => {
@@ -215,6 +235,305 @@ async function loadPaperWidth() {
         }
     } catch (error) {
         console.error('Error loading paper width:', error);
+    }
+}
+
+function formatScaleKg(kg) {
+    const n = Number(kg);
+    if (!Number.isFinite(n)) return '0,000';
+    return n.toFixed(3).replace('.', ',');
+}
+
+function formatScaleMoney(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 'R$ 0,00';
+    return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+function applyScalePricing(data) {
+    const price = Number(data?.pricePerKg);
+    const total = Number(data?.total);
+    const kg = Number(data?.kg ?? lastScaleReading.kg);
+    if (Number.isFinite(price)) {
+        lastScaleReading.pricePerKg = price;
+    }
+    if (Number.isFinite(kg)) {
+        lastScaleReading.kg = kg;
+    }
+    const computed = Number.isFinite(total)
+        ? total
+        : (lastScaleReading.kg || 0) * (Number.isFinite(price) ? price : lastScaleReading.pricePerKg || 0);
+    lastScaleReading.total = computed;
+    if (scalePriceDisplay && Number.isFinite(price)) {
+        scalePriceDisplay.textContent = formatScaleMoney(price);
+    }
+    if (scaleTotalDisplay) {
+        scaleTotalDisplay.textContent = formatScaleMoney(computed);
+    }
+    if (scalePriceInput && Number.isFinite(price) && document.activeElement !== scalePriceInput) {
+        scalePriceInput.value = price ? String(price) : '0';
+    }
+    if (scalePrintBtn) {
+        scalePrintBtn.disabled = !(lastScaleReading.kg > 0);
+    }
+}
+
+function applyScaleReading(reading) {
+    if (!reading) return;
+    lastScaleReading.kg = Number(reading.kg) || 0;
+    lastScaleReading.stable = reading.stable !== false;
+    if (Number.isFinite(Number(reading.pricePerKg))) {
+        lastScaleReading.pricePerKg = Number(reading.pricePerKg);
+    }
+    if (Number.isFinite(Number(reading.total))) {
+        lastScaleReading.total = Number(reading.total);
+    }
+    if (scaleWeightValue) {
+        scaleWeightValue.textContent = formatScaleKg(reading.kg);
+    }
+    if (scaleWeightDisplay) {
+        scaleWeightDisplay.classList.toggle('is-unstable', reading.stable === false);
+    }
+    if (scaleStableBadge) {
+        if (reading.stable) {
+            scaleStableBadge.textContent = 'Estável';
+            scaleStableBadge.className = 'scale-badge stable';
+        } else {
+            scaleStableBadge.textContent = 'Instável';
+            scaleStableBadge.className = 'scale-badge unstable';
+        }
+    }
+    applyScalePricing(reading);
+}
+
+function updateScaleDetectedInfo(status) {
+    if (!scaleDetectedInfo) return;
+    if (status?.mode === 'detecting') {
+        scaleDetectedInfo.textContent = 'Detectando baud e protocolo...';
+        return;
+    }
+    if (status?.running && status.portPath) {
+        const proto = status.protocol?.name || status.protocolId || '—';
+        scaleDetectedInfo.textContent = `${status.portPath} · ${status.baudRate} baud · ${proto}`;
+        return;
+    }
+    scaleDetectedInfo.textContent = 'Baud e protocolo detectados ao conectar.';
+}
+
+function applyScaleStatus(status) {
+    if (!status) return;
+    if (status.portPath && (status.mode === 'serial' || status.running)) {
+        lastScalePortPath = status.portPath;
+        if (scalePortSelect && [...scalePortSelect.options].some((o) => o.value === status.portPath)) {
+            scalePortSelect.value = status.portPath;
+        }
+    }
+    if (scaleModeLabel) {
+        if (status.mode === 'detecting') {
+            scaleModeLabel.textContent = 'Detectando...';
+        } else if (status.running && status.mode === 'serial') {
+            scaleModeLabel.textContent = status.portPath || 'Conectada';
+        } else {
+            scaleModeLabel.textContent = 'Parada';
+        }
+    }
+    const busy = Boolean(status.running) || status.mode === 'detecting';
+    if (scaleConnectBtn) {
+        scaleConnectBtn.disabled = busy;
+        scaleConnectBtn.textContent = status.mode === 'detecting' ? 'Detectando...' : 'Conectar';
+    }
+    if (scaleStopBtn) scaleStopBtn.disabled = !status.running;
+    if (scalePortSelect) scalePortSelect.disabled = busy;
+    if (scaleSendPriceBtn) scaleSendPriceBtn.disabled = !status.running;
+    if (scalePriceInput) scalePriceInput.disabled = false;
+    updateScaleDetectedInfo(status);
+    applyScalePricing(status);
+    if (scaleProtocolHint) {
+        if (status.lastError) {
+            scaleProtocolHint.textContent = `Erro: ${status.lastError}`;
+        } else if (status.running) {
+            scaleProtocolHint.textContent = 'Lendo peso da balança. Coloque um item estável no prato.';
+        } else {
+            scaleProtocolHint.textContent = 'Conecte o cabo da balança e clique em Conectar.';
+        }
+    }
+    if (status.kg != null) {
+        applyScaleReading({ kg: status.kg, stable: status.stable });
+    }
+}
+
+async function loadScalePorts(preferredPath) {
+    if (!scalePortSelect || !window.electronAPI.scaleListPorts) return;
+    try {
+        const result = await window.electronAPI.scaleListPorts();
+        const ports = result?.ports || [];
+        const selected = preferredPath || lastScalePortPath || scalePortSelect.value || '';
+        scalePortSelect.innerHTML = '<option value="">Automático</option>';
+        ports.forEach((p) => {
+            const opt = document.createElement('option');
+            opt.value = p.path;
+            opt.textContent = p.friendlyName ? `${p.path} — ${p.friendlyName}` : p.path;
+            scalePortSelect.appendChild(opt);
+        });
+        if (selected && [...scalePortSelect.options].some((o) => o.value === selected)) {
+            scalePortSelect.value = selected;
+            lastScalePortPath = selected;
+        }
+        if (!ports.length && scaleProtocolHint) {
+            scaleProtocolHint.textContent = 'Nenhuma COM encontrada. Conecte o cabo USB da balança.';
+        }
+    } catch (error) {
+        console.error('Error listing scale ports:', error);
+    }
+}
+
+async function loadScalePanel() {
+    if (!window.electronAPI.scaleGetStatus) return;
+    try {
+        const status = await window.electronAPI.scaleGetStatus();
+        if (status?.portPath) lastScalePortPath = status.portPath;
+        await loadScalePorts(lastScalePortPath);
+        applyScaleStatus(status);
+    } catch (error) {
+        console.error('Error loading scale panel:', error);
+    }
+}
+
+function setupAppTabs() {
+    const tabs = document.querySelectorAll('.app-tab');
+    const views = {
+        print: document.getElementById('tab-print'),
+        scale: document.getElementById('tab-scale'),
+    };
+    if (!tabs.length) return;
+
+    tabs.forEach((tab) => {
+        tab.addEventListener('click', () => {
+            const name = tab.dataset.tab;
+            tabs.forEach((t) => {
+                const active = t === tab;
+                t.classList.toggle('active', active);
+                t.setAttribute('aria-selected', active ? 'true' : 'false');
+            });
+            Object.entries(views).forEach(([key, el]) => {
+                if (!el) return;
+                const active = key === name;
+                el.classList.toggle('active', active);
+                if (active) el.removeAttribute('hidden');
+                else el.setAttribute('hidden', '');
+            });
+            if (name === 'scale') {
+                loadScalePorts(scalePortSelect?.value || lastScalePortPath);
+            }
+        });
+    });
+}
+
+function setupScaleListeners() {
+    if (!window.electronAPI.onScaleWeight) return;
+
+    window.electronAPI.onScaleWeight((reading) => applyScaleReading(reading));
+    window.electronAPI.onScaleStatus((status) => applyScaleStatus(status));
+
+    if (scaleRefreshPortsBtn) {
+        scaleRefreshPortsBtn.addEventListener('click', () => loadScalePorts(scalePortSelect?.value));
+    }
+
+    if (scalePortSelect) {
+        scalePortSelect.addEventListener('change', () => {
+            lastScalePortPath = scalePortSelect.value || '';
+        });
+    }
+
+    if (scaleConnectBtn) {
+        scaleConnectBtn.addEventListener('click', async () => {
+            scaleConnectBtn.disabled = true;
+            scaleConnectBtn.textContent = 'Detectando...';
+            showStatus('Detectando balança (baud/protocolo)...', 'info');
+            const result = await window.electronAPI.scaleConnect({
+                path: scalePortSelect?.value || undefined,
+            });
+            applyScaleStatus(result);
+            if (result?.success && result.running) {
+                showStatus(
+                    `Balança em ${result.portPath} @ ${result.baudRate} (${result.protocol?.name || result.protocolId})`,
+                    'success'
+                );
+            } else {
+                showStatus(result?.error || result?.lastError || 'Falha ao conectar balança', 'error');
+            }
+        });
+    }
+
+    if (scaleStopBtn) {
+        scaleStopBtn.addEventListener('click', async () => {
+            const result = await window.electronAPI.scaleStop();
+            applyScaleStatus(result);
+            showStatus('Balança desconectada', 'info');
+        });
+    }
+
+    const pushPrice = async () => {
+        if (!window.electronAPI.scaleSetPrice) return;
+        const price = Number(String(scalePriceInput?.value || '0').replace(',', '.'));
+        const result = await window.electronAPI.scaleSetPrice(price);
+        applyScaleStatus(result);
+        if (result?.ack) {
+            showStatus(`Preço/kg ${formatScaleMoney(result.pricePerKg)} aceito pela balança`, 'success');
+        } else if (result?.appOk) {
+            showStatus(
+                result?.error ||
+                    `Preço no app: ${formatScaleMoney(result.pricePerKg)}. Balança não aceitou (NAK) — total só no app.`,
+                'error'
+            );
+        } else {
+            showStatus(result?.error || 'Falha ao enviar preço', 'error');
+        }
+    };
+
+    if (scaleSendPriceBtn) {
+        scaleSendPriceBtn.addEventListener('click', pushPrice);
+    }
+
+    if (scalePriceInput) {
+        scalePriceInput.addEventListener('change', pushPrice);
+        scalePriceInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                pushPrice();
+            }
+        });
+    }
+
+    if (scalePrintBtn) {
+        scalePrintBtn.disabled = true;
+        scalePrintBtn.addEventListener('click', async () => {
+            if (!window.electronAPI.printScaleTicket) return;
+            const priceFromInput = Number(String(scalePriceInput?.value || '0').replace(',', '.'));
+            const pricePerKg = Number.isFinite(priceFromInput) && priceFromInput >= 0
+                ? priceFromInput
+                : lastScaleReading.pricePerKg;
+            const kg = lastScaleReading.kg || 0;
+            const total = kg * (Number.isFinite(pricePerKg) ? pricePerKg : 0);
+            scalePrintBtn.disabled = true;
+            try {
+                const result = await window.electronAPI.printScaleTicket({
+                    kg,
+                    pricePerKg,
+                    total,
+                    at: new Date().toISOString(),
+                });
+                if (result?.success) {
+                    showStatus(result.message || 'Pesagem enviada para a impressora', 'success');
+                } else {
+                    showStatus(result?.message || 'Falha ao imprimir pesagem', 'error');
+                }
+            } catch (error) {
+                showStatus(error?.message || 'Falha ao imprimir pesagem', 'error');
+            } finally {
+                scalePrintBtn.disabled = !(lastScaleReading.kg > 0);
+            }
+        });
     }
 }
 

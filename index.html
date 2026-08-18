@@ -39,7 +39,13 @@
         <!-- Main App Section -->
         <div id="app-section" class="section hidden">
             <header class="app-header">
-                <h1>Link Eats - Impressora</h1>
+                <div class="header-left">
+                    <h1>Link Eats</h1>
+                    <nav class="app-tabs" role="tablist">
+                        <button type="button" class="app-tab active" data-tab="print" role="tab" aria-selected="true">Impressão</button>
+                        <button type="button" class="app-tab" data-tab="scale" role="tab" aria-selected="false">Balança</button>
+                    </nav>
+                </div>
                 <div class="header-controls">
                     <div class="connection-status">
                         <span id="connection-indicator" class="status-dot"></span>
@@ -52,110 +58,170 @@
             </header>
 
             <div class="main-content">
-                <div class="app-content">
-                    <!-- Settings Panel -->
-                    <div class="settings-panel">
-                        <h3>Configurações</h3>
+                <!-- ABA IMPRESSÃO -->
+                <div id="tab-print" class="tab-view active" role="tabpanel">
+                    <div class="app-content">
+                        <div class="settings-panel">
+                            <h3>Impressão</h3>
 
-                        <div class="setting-item">
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="auto-print-toggle">
-                                <span class="slider"></span>
-                            </label>
-                            <span>Impressão Automática</span>
-                        </div>
-
-                        <h4>Impressora</h4>
-                        <div class="form-group">
-                            <select id="printer-select" style="width:100%;padding:8px;border:2px solid #e1e5e9;border-radius:8px;font-size:14px;">
-                                <option value="">-- Padrão do sistema --</option>
-                            </select>
-                        </div>
-                        <button id="refresh-printers-btn" class="btn-secondary" style="width:100%;margin-bottom:10px;">Atualizar Impressoras</button>
-
-                        <h4>Fonte</h4>
-                        <div class="form-group font-scale-group">
-                            <div class="font-scale-header">
-                                <span id="font-scale-value">Normal</span>
+                            <div class="setting-item">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="auto-print-toggle">
+                                    <span class="slider"></span>
+                                </label>
+                                <span>Impressão Automática</span>
                             </div>
-                            <select id="font-scale-select" style="width:100%;padding:8px;border:2px solid #e1e5e9;border-radius:8px;font-size:14px;">
-                                <option value="1">Muito pequena</option>
-                                <option value="2">Pequena</option>
-                                <option value="3">Compacta</option>
-                                <option value="4" selected>Normal</option>
-                                <option value="5">Média</option>
-                                <option value="6">Média+</option>
-                                <option value="7">Grande</option>
-                                <option value="8">Muito grande</option>
-                            </select>
-                            <button id="print-font-sample-btn" class="btn-secondary" style="width:100%;margin-top:8px;">Imprimir amostra de fonte</button>
-                            <small style="color:#888;display:block;margin-top:4px;">Só títulos em negrito. Use a amostra para escolher o tamanho ideal.</small>
-                        </div>
 
-                        <h4>Papel</h4>
-                        <div class="form-group">
-                            <select id="paper-width-select" style="width:100%;padding:8px;border:2px solid #e1e5e9;border-radius:8px;font-size:14px;">
-                                <option value="58mm">58mm (padrão)</option>
-                                <option value="80mm">80mm</option>
-                            </select>
-                        </div>
+                            <h4>Impressora</h4>
+                            <div class="form-group">
+                                <select id="printer-select" style="width:100%;padding:8px;border:2px solid #e1e5e9;border-radius:8px;font-size:14px;">
+                                    <option value="">-- Padrão do sistema --</option>
+                                </select>
+                            </div>
+                            <button id="refresh-printers-btn" class="btn-secondary" style="width:100%;margin-bottom:10px;">Atualizar Impressoras</button>
 
-                        <hr class="settings-divider">
-
-                        <p class="update-version-line" style="margin-bottom:12px;">
-                            Versão: <strong id="current-version">—</strong>
-                        </p>
-                        <!-- Elementos ocultos mantidos para o fluxo de update no header -->
-                        <div id="update-panel" class="hidden" aria-hidden="true">
-                            <div id="update-available-box" class="hidden">
-                                <strong id="available-version">—</strong>
-                                <p id="update-release-notes"></p>
-                                <div id="update-progress-wrap" class="hidden">
-                                    <div class="update-progress-bar">
-                                        <div id="update-progress-fill" class="update-progress-fill"></div>
-                                    </div>
-                                    <span id="update-progress-text">0%</span>
+                            <h4>Fonte</h4>
+                            <div class="form-group font-scale-group">
+                                <div class="font-scale-header">
+                                    <span id="font-scale-value">Normal</span>
                                 </div>
-                                <button id="update-download-btn" type="button">Baixar</button>
-                                <button id="update-install-btn" class="hidden" type="button">Instalar</button>
+                                <select id="font-scale-select" style="width:100%;padding:8px;border:2px solid #e1e5e9;border-radius:8px;font-size:14px;">
+                                    <option value="1">Muito pequena</option>
+                                    <option value="2">Pequena</option>
+                                    <option value="3">Compacta</option>
+                                    <option value="4" selected>Normal</option>
+                                    <option value="5">Média</option>
+                                    <option value="6">Média+</option>
+                                    <option value="7">Grande</option>
+                                    <option value="8">Muito grande</option>
+                                </select>
+                                <button id="print-font-sample-btn" class="btn-secondary" style="width:100%;margin-top:8px;">Imprimir amostra de fonte</button>
+                                <small style="color:#888;display:block;margin-top:4px;">Só títulos em negrito. Use a amostra para escolher o tamanho ideal.</small>
                             </div>
-                            <p id="update-status-text" class="hidden"></p>
-                            <button id="check-updates-btn" class="hidden" type="button">Verificar</button>
+
+                            <h4>Papel</h4>
+                            <div class="form-group">
+                                <select id="paper-width-select" style="width:100%;padding:8px;border:2px solid #e1e5e9;border-radius:8px;font-size:14px;">
+                                    <option value="58mm">58mm (padrão)</option>
+                                    <option value="80mm">80mm</option>
+                                </select>
+                            </div>
+
+                            <hr class="settings-divider">
+
+                            <p class="update-version-line" style="margin-bottom:12px;">
+                                Versão: <strong id="current-version">—</strong>
+                            </p>
+                            <div id="update-panel" class="hidden" aria-hidden="true">
+                                <div id="update-available-box" class="hidden">
+                                    <strong id="available-version">—</strong>
+                                    <p id="update-release-notes"></p>
+                                    <div id="update-progress-wrap" class="hidden">
+                                        <div class="update-progress-bar">
+                                            <div id="update-progress-fill" class="update-progress-fill"></div>
+                                        </div>
+                                        <span id="update-progress-text">0%</span>
+                                    </div>
+                                    <button id="update-download-btn" type="button">Baixar</button>
+                                    <button id="update-install-btn" class="hidden" type="button">Instalar</button>
+                                </div>
+                                <p id="update-status-text" class="hidden"></p>
+                                <button id="check-updates-btn" class="hidden" type="button">Verificar</button>
+                            </div>
+
+                            <button id="reconnect-device-btn" class="btn-secondary" style="width:100%">Conectar</button>
                         </div>
 
-                        <button id="reconnect-device-btn" class="btn-secondary" style="width:100%">Conectar</button>
+                        <div class="orders-panel">
+                            <div class="orders-header">
+                                <h3>Pedidos Pendentes</h3>
+                                <div class="orders-header-actions">
+                                    <button id="clear-all-orders-btn" class="btn-secondary clear-all-btn hidden">Limpar Todos</button>
+                                    <span id="pending-count" class="count-badge">0</span>
+                                </div>
+                            </div>
+
+                            <div id="orders-list" class="orders-list">
+                                <div class="no-orders">
+                                    <p>Nenhum pedido pendente</p>
+                                </div>
+                            </div>
+
+                            <div class="orders-footer">
+                                <p id="status-text">Aguardando pedidos...</p>
+                            </div>
+                        </div>
                     </div>
-                    
-                    <!-- Orders Panel -->
-                    <div class="orders-panel">
-                        <div class="orders-header">
-                            <h3>Pedidos Pendentes</h3>
-                            <div class="orders-header-actions">
-                                <button id="clear-all-orders-btn" class="btn-secondary clear-all-btn hidden">Limpar Todos</button>
-                                <span id="pending-count" class="count-badge">0</span>
+                </div>
+
+                <!-- ABA BALANÇA -->
+                <div id="tab-scale" class="tab-view" role="tabpanel" hidden>
+                    <div class="scale-workspace">
+                        <aside class="scale-side">
+                            <h3>Balança</h3>
+                            <p class="scale-side-lead">Conecte o cabo USB e deixe o app detectar a porta automaticamente.</p>
+
+                            <div class="form-group">
+                                <label for="scale-port-select">Porta COM</label>
+                                <div class="scale-port-row">
+                                    <select id="scale-port-select">
+                                        <option value="">Automático</option>
+                                    </select>
+                                    <button id="scale-refresh-ports-btn" class="btn-secondary" type="button" title="Atualizar portas">↻</button>
+                                </div>
                             </div>
-                        </div>
-                        
-                        <div id="orders-list" class="orders-list">
-                            <div class="no-orders">
-                                <p>Nenhum pedido pendente</p>
+
+                            <p id="scale-detected-info" class="scale-detected-info">Baud e protocolo detectados ao conectar.</p>
+
+                            <div class="form-group">
+                                <label for="scale-price-input">Preço / kg (R$)</label>
+                                <input id="scale-price-input" type="number" min="0" max="9999.99" step="0.01" value="0" placeholder="Ex: 12,50">
                             </div>
-                        </div>
-                        
-                        <div class="orders-footer">
-                            <p id="status-text">Aguardando pedidos...</p>
-                        </div>
+                            <button id="scale-send-price-btn" class="btn-secondary" type="button" style="width:100%;margin-bottom:12px;" disabled>Enviar preço à balança</button>
+
+                            <div class="scale-actions">
+                                <button id="scale-connect-btn" class="btn-primary" type="button">Conectar</button>
+                                <button id="scale-stop-btn" class="btn-secondary" type="button" disabled>Desconectar</button>
+                            </div>
+
+                            <small id="scale-protocol-hint" class="scale-hint">Conecte o cabo da balança e clique em Conectar.</small>
+                        </aside>
+
+                        <section class="scale-stage">
+                            <div class="scale-stage-card">
+                                <div class="scale-stage-label">Peso atual</div>
+                                <div class="scale-weight-display" id="scale-weight-display">
+                                    <span class="scale-weight-value" id="scale-weight-value">0,000</span>
+                                    <span class="scale-weight-unit">kg</span>
+                                </div>
+                                <div class="scale-meta">
+                                    <span id="scale-stable-badge" class="scale-badge">—</span>
+                                    <span id="scale-mode-label" class="scale-mode-label">Parada</span>
+                                </div>
+                                <div class="scale-pricing">
+                                    <div class="scale-pricing-row">
+                                        <span>Preço/kg</span>
+                                        <strong id="scale-price-display">R$ 0,00</strong>
+                                    </div>
+                                    <div class="scale-pricing-row scale-pricing-total">
+                                        <span>Total</span>
+                                        <strong id="scale-total-display">R$ 0,00</strong>
+                                    </div>
+                                </div>
+                                <button id="scale-print-btn" class="btn-primary scale-print-btn" type="button">
+                                    Imprimir pesagem
+                                </button>
+                            </div>
+                        </section>
                     </div>
                 </div>
             </div>
 
-        </div>
-        
-        <!-- Status Bar -->
-        <div class="status-bar">
-            <div id="status-message">Aguardando pedidos...</div>
-            <div id="last-activity"></div>
-        </div>
+            <!-- Status Bar -->
+            <div class="status-bar">
+                <div id="status-message">Aguardando pedidos...</div>
+                <div id="last-activity"></div>
+            </div>
         </div>
     </div>
 

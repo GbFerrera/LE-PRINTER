@@ -12,11 +12,13 @@ const {
   buildOrderReceipt,
   buildTabReceipt,
   buildFontSampleReceipt,
+  buildScaleWeighReceipt,
   documentToPlainText,
   normalizeFontScale,
   getFontScaleLabel,
   DEFAULT_FONT_SCALE,
 } = require('./printFormat');
+const { ScaleService } = require('./scale/ScaleService');
 
 // Configurações para resolver problemas no Windows
 app.disableHardwareAcceleration();
@@ -66,6 +68,21 @@ let selectedPrinter = null;
 let fontScale = normalizeFontScale(store.get('fontScale', store.get('fontSize', DEFAULT_FONT_SCALE)));
 let paperWidth = store.get('paperWidth', '58mm') === '80mm' ? '80mm' : '58mm';
 const recentlyPrinted = new Set(); // deduplication guard
+const scaleService = new ScaleService();
+const savedScaleProtocol = store.get('scaleProtocol', 'toledo');
+scaleService.protocolId = savedScaleProtocol || 'toledo';
+scaleService.baudRate = Number(store.get('scaleBaudRate', 2400)) || 2400;
+scaleService.portPath = store.get('scalePortPath', null);
+scaleService.pricePerKg = Number(store.get('scalePricePerKg', 0)) || 0;
+
+function broadcastScale(channel, payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, payload);
+  }
+}
+
+scaleService.on('weight', (reading) => broadcastScale('scale-weight', reading));
+scaleService.on('status', (status) => broadcastScale('scale-status', status));
 
 function resolveAppIconPath() {
   const candidates = [
@@ -794,6 +811,48 @@ ipcMain.handle('get-paper-width', () => {
   return { paper_width: paperWidth };
 });
 
+// --- Balança (serial real + auto-detecção) ---
+ipcMain.handle('scale-get-status', () => {
+  return { success: true, ...scaleService.getStatus() };
+});
+
+ipcMain.handle('scale-list-ports', async () => {
+  const result = await scaleService.listPorts();
+  return { success: !result.error, ...result };
+});
+
+ipcMain.handle('scale-connect', async (_event, options = {}) => {
+  try {
+    const status = await scaleService.connectAuto({
+      path: options.path || undefined,
+    });
+    if (status.portPath) store.set('scalePortPath', status.portPath);
+    if (status.baudRate) store.set('scaleBaudRate', status.baudRate);
+    if (status.protocolId) store.set('scaleProtocol', status.protocolId);
+    return { success: true, ...status };
+  } catch (error) {
+    return { success: false, error: error.message, ...scaleService.getStatus() };
+  }
+});
+
+ipcMain.handle('scale-stop', () => {
+  return { success: true, ...scaleService.stop() };
+});
+
+ipcMain.handle('scale-set-price', async (_event, price) => {
+  try {
+    const status = await scaleService.setPricePerKg(price, { send: true });
+    store.set('scalePricePerKg', status.pricePerKg);
+    return {
+      ...status,
+      success: Boolean(status.ack),
+      appOk: true,
+    };
+  } catch (error) {
+    return { success: false, appOk: false, error: error.message, ...scaleService.getStatus() };
+  }
+});
+
 ipcMain.handle('print-font-sample', async () => {
   const receipt = buildFontSampleReceipt(fontScale, paperWidth, getPrintOptions());
   const sampleText = documentToPlainText(receipt);
@@ -819,6 +878,53 @@ ipcMain.handle('print-font-sample', async () => {
     return { success: false, message: response.error || 'Falha ao imprimir amostra' };
   } catch (error) {
     return { success: false, message: error.message };
+  }
+});
+
+ipcMain.handle('print-scale-ticket', async (event, payload = {}) => {
+  const status = scaleService.getStatus();
+  const kg = Number(payload?.kg ?? status.kg);
+  const pricePerKg = Number(payload?.pricePerKg ?? status.pricePerKg);
+  const total = Number(payload?.total ?? status.total);
+  if (!Number.isFinite(kg) || kg <= 0) {
+    return { success: false, message: 'Nenhum peso válido para imprimir. Coloque o item na balança.' };
+  }
+
+  const receipt = buildScaleWeighReceipt(
+    {
+      kg,
+      pricePerKg: Number.isFinite(pricePerKg) ? pricePerKg : 0,
+      total: Number.isFinite(total) ? total : kg * (Number.isFinite(pricePerKg) ? pricePerKg : 0),
+      at: payload?.at || new Date().toISOString(),
+    },
+    companyName,
+    getPrintOptions()
+  );
+  const text = documentToPlainText(receipt);
+
+  if (!printerProcess || !printerReady) {
+    const initialized = initializePrinter();
+    if (!initialized) {
+      console.log('=== CUPOM DE PESAGEM (SIMULAÇÃO) ===');
+      console.log(text);
+      console.log('=== FIM DA SIMULAÇÃO ===');
+      return { success: true, mode: 'simulation', message: 'Cupom gerado em modo simulação (veja o console)' };
+    }
+  }
+
+  try {
+    const response = await sendPrinterCommand(buildPrinterCommandPayload({
+      action: 'print',
+      receipt,
+      text,
+      printer: selectedPrinter || undefined,
+    }));
+    if (response.success) {
+      return { success: true, mode: 'printer', message: response.message || 'Pesagem enviada para a impressora' };
+    }
+    return { success: false, mode: 'printer', message: response.error || 'Falha ao imprimir pesagem' };
+  } catch (error) {
+    return { success: false, mode: 'printer', message: error.message };
   }
 });
 

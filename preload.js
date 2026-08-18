@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setPaperWidth: (width) => ipcRenderer.invoke('set-paper-width', width),
   getPaperWidth: () => ipcRenderer.invoke('get-paper-width'),
   printFontSample: () => ipcRenderer.invoke('print-font-sample'),
+  printScaleTicket: (payload) => ipcRenderer.invoke('print-scale-ticket', payload),
 
   // Printing
   printOrder: (order) => ipcRenderer.invoke('print-order', order),
@@ -35,6 +36,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onDeviceAccessRevoked: (callback) => ipcRenderer.on('device-access-revoked', callback),
   onNewOrder: (callback) => ipcRenderer.on('new-order', callback),
   onPrintResult: (callback) => ipcRenderer.on('print-result', callback),
+
+  // Scale (serial auto-detect)
+  scaleGetStatus: () => ipcRenderer.invoke('scale-get-status'),
+  scaleListPorts: () => ipcRenderer.invoke('scale-list-ports'),
+  scaleConnect: (options) => ipcRenderer.invoke('scale-connect', options),
+  scaleStop: () => ipcRenderer.invoke('scale-stop'),
+  scaleSetPrice: (price) => ipcRenderer.invoke('scale-set-price', price),
+  onScaleWeight: (callback) => ipcRenderer.on('scale-weight', (_e, data) => callback(data)),
+  onScaleStatus: (callback) => ipcRenderer.on('scale-status', (_e, data) => callback(data)),
 
   // Cleanup
   removeAllListeners: (channel) => ipcRenderer.removeAllListeners(channel),

@@ -554,6 +554,42 @@ function buildFontSampleReceipt(scale, paperWidth = '58mm', options = {}) {
   return doc.toDocument({ kind: 'font_sample', header_title: 'NOVO PEDIDO' });
 }
 
+function formatWeightKg(kg) {
+  const num = Number(kg);
+  if (!Number.isFinite(num)) return '0,000 kg';
+  return `${num.toFixed(3).replace('.', ',')} kg`;
+}
+
+function buildScaleWeighReceipt(data = {}, companyName, options = {}) {
+  const receiptWidth = getReceiptWidth(options.paperWidth);
+  const doc = createStyledReceipt(options);
+  const empresa = companyName || data?.company_name || 'LINK EATS';
+  const kg = Number(data?.kg);
+  const pricePerKg = Number(data?.pricePerKg);
+  const total = Number.isFinite(Number(data?.total))
+    ? Number(data.total)
+    : (Number.isFinite(kg) ? kg : 0) * (Number.isFinite(pricePerKg) ? pricePerKg : 0);
+  const when = formatDateTimeBR(data?.at || new Date().toISOString());
+
+  doc.push(formatSection('Pesagem', receiptWidth), 'bold');
+  doc.push(`ESTABELECIMENTO: ${empresa}`, 'title');
+  doc.push(when);
+  doc.push('');
+  doc.push(padLine('Peso', formatWeightKg(kg), receiptWidth));
+  doc.push(padLine('Preco/kg', formatMoneyBR(pricePerKg), receiptWidth));
+  doc.push('-'.repeat(Math.min(receiptWidth, 32)));
+  doc.push(padLine('TOTAL', formatMoneyBR(total), receiptWidth), 'total');
+  doc.push('');
+  doc.push('Bom apetite', 'bold');
+  doc.push('');
+  doc.push('Link Eats', 'bold');
+  doc.push('www.linkeats.com.br');
+  doc.push('');
+  doc.push('');
+
+  return doc.toDocument({ kind: 'scale_weigh', header_title: 'PESAGEM' });
+}
+
 function formatOrderText(order, companyName, options = {}) {
   return documentToPlainText(buildOrderReceipt(order, companyName, options));
 }
@@ -573,6 +609,7 @@ module.exports = {
   buildOrderReceipt,
   buildTabReceipt,
   buildFontSampleReceipt,
+  buildScaleWeighReceipt,
   documentToPlainText,
   normalizeFontScale,
   getFontScaleLabel,
