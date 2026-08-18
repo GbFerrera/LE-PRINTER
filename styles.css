@@ -1143,9 +1143,8 @@ input:checked + .slider:before {
     overflow-y: auto;
     background: #fff;
     border: 1px solid #e2e8f0;
-    border-radius: 12px;
-    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
-    padding: 6px;
+    border-radius: 8px;
+    padding: 4px 0;
 }
 
 .scale-card-option {
@@ -1157,8 +1156,8 @@ input:checked + .slider:before {
     border: 0;
     background: transparent;
     text-align: left;
-    padding: 10px 12px;
-    border-radius: 8px;
+    padding: 10px 14px;
+    border-radius: 0;
     cursor: pointer;
     font-size: 14px;
     color: #334155;
@@ -1175,9 +1174,22 @@ input:checked + .slider:before {
     font-size: 12px;
 }
 
-.scale-card-option:hover,
+.scale-card-option:hover {
+    background: #fff4eb;
+}
+
 .scale-card-option.is-selected {
     background: #fff4eb;
+    box-shadow: inset 3px 0 0 #fb6900;
+}
+
+.scale-card-option.is-selected strong {
+    color: #fb6900;
+}
+
+.scale-card-search-row input.is-selected {
+    border-color: #fb6900;
+    background: #fffaf5;
 }
 
 .scale-card-option.is-empty {
@@ -1188,17 +1200,6 @@ input:checked + .slider:before {
 
 .scale-card-option.is-empty:hover {
     background: transparent;
-}
-
-.scale-card-empty {
-    margin: 0;
-    padding: 12px;
-    border-radius: 10px;
-    background: #f8fafc;
-    border: 1px dashed #cbd5e1;
-    color: #64748b;
-    font-size: 13px;
-    text-align: center;
 }
 
 .scale-print-block {

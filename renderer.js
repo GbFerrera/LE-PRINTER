@@ -55,7 +55,6 @@ const scalePrintBtn = document.getElementById('scale-print-btn');
 const scaleCardCodeInput = document.getElementById('scale-card-code-input');
 const scaleActivateCardBtn = document.getElementById('scale-activate-card-btn');
 const scaleCardResults = document.getElementById('scale-card-results');
-const scaleCardEmpty = document.getElementById('scale-card-empty');
 const scaleCardRefreshBtn = document.getElementById('scale-card-refresh-btn');
 const scaleCardHint = document.getElementById('scale-card-hint');
 const scaleCardCombobox = document.getElementById('scale-card-combobox');
@@ -65,6 +64,7 @@ let scaleTabCards = [];
 let scaleSelectedCardCode = null;
 let scaleCardsLoading = false;
 let scaleCardsSearchTimer = null;
+let scaleCardActivating = false;
 let pendingUpdateVersion = null;
 let headerUpdatePhase = 'idle'; // idle | available | downloading | ready
 
@@ -263,8 +263,7 @@ function formatScaleMoney(value) {
 
 function updateScaleActionButtons() {
     const hasWeight = lastScaleReading.kg > 0;
-    const typed = String(scaleCardCodeInput?.value || '').trim();
-    const code = Number(scaleSelectedCardCode || typed);
+    const code = getSelectedScaleCardCode();
     const hasValidCode = Number.isInteger(code) && code > 0;
     const canActivate = hasWeight && lastScaleReading.stable && hasValidCode && isPaired;
 
@@ -272,19 +271,21 @@ function updateScaleActionButtons() {
         scalePrintBtn.disabled = !hasWeight;
     }
     if (scaleActivateCardBtn) {
-        scaleActivateCardBtn.disabled = !canActivate;
+        scaleActivateCardBtn.hidden = !hasValidCode;
+        scaleActivateCardBtn.disabled = !canActivate || scaleCardActivating;
     }
 }
 
 function getSelectedScaleCardCode() {
+    if (scaleSelectedCardCode != null) return scaleSelectedCardCode;
     const typed = String(scaleCardCodeInput?.value || '').trim();
-    const code = Number(scaleSelectedCardCode || typed);
+    const code = Number(typed);
     return Number.isInteger(code) && code > 0 ? code : null;
 }
 
 function filterScaleTabCards(query) {
     const q = String(query || '').trim().toLowerCase();
-    if (!q) return scaleTabCards.slice(0, 30);
+    if (!q) return [];
     return scaleTabCards
         .filter((card) => {
             const codeMatch = String(card.code).includes(q) || String(card.codeLabel).includes(q);
@@ -294,16 +295,52 @@ function filterScaleTabCards(query) {
         .slice(0, 30);
 }
 
-function renderScaleCardResults(query, { open = true } = {}) {
-    if (!scaleCardResults || !scaleCardEmpty) return;
+function hideScaleCardResults() {
+    if (scaleCardResults) scaleCardResults.hidden = true;
+}
 
-    const filtered = filterScaleTabCards(query);
+function selectScaleCard(card) {
+    if (!card) return;
+    scaleSelectedCardCode = card.code;
+    if (scaleCardCodeInput) {
+        scaleCardCodeInput.value = card.codeLabel;
+        scaleCardCodeInput.classList.add('is-selected');
+    }
+    if (scaleCardResults) {
+        scaleCardResults.querySelectorAll('.scale-card-option').forEach((el) => {
+            el.classList.toggle('is-selected', el.dataset.code === String(card.code));
+        });
+    }
+    updateScaleActionButtons();
+}
+
+function clearScaleCardSelection() {
+    scaleSelectedCardCode = null;
+    if (scaleCardCodeInput) {
+        scaleCardCodeInput.value = '';
+        scaleCardCodeInput.classList.remove('is-selected');
+    }
+    updateScaleActionButtons();
+}
+
+function renderScaleCardResults(query, { open = false } = {}) {
+    if (!scaleCardResults) return;
+
+    const q = String(query || '').trim();
     scaleCardResults.innerHTML = '';
 
+    if (!q || !open) {
+        hideScaleCardResults();
+        if (scaleCardHint && !scaleCardsLoading && !scaleCardActivating) {
+            scaleCardHint.textContent = 'Digite para buscar, clique para selecionar e depois ative.';
+        }
+        return;
+    }
+
+    const filtered = filterScaleTabCards(q);
+
     if (!scaleTabCards.length) {
-        scaleCardEmpty.hidden = false;
-        scaleCardEmpty.textContent = 'Nenhum cartão disponível';
-        scaleCardResults.hidden = true;
+        hideScaleCardResults();
         if (scaleCardHint) {
             scaleCardHint.textContent = scaleCardsLoading
                 ? 'Carregando cartões...'
@@ -312,16 +349,12 @@ function renderScaleCardResults(query, { open = true } = {}) {
         return;
     }
 
-    scaleCardEmpty.hidden = true;
-
     if (!filtered.length) {
-        scaleCardResults.hidden = !open;
-        if (open) {
-            const emptyOpt = document.createElement('div');
-            emptyOpt.className = 'scale-card-option is-empty';
-            emptyOpt.textContent = 'Nenhum cartão encontrado';
-            scaleCardResults.appendChild(emptyOpt);
-        }
+        scaleCardResults.hidden = false;
+        const emptyOpt = document.createElement('div');
+        emptyOpt.className = 'scale-card-option is-empty';
+        emptyOpt.textContent = 'Nenhum cartão encontrado';
+        scaleCardResults.appendChild(emptyOpt);
         if (scaleCardHint) {
             scaleCardHint.textContent = 'Cartão não encontrado ou já em uso.';
         }
@@ -341,24 +374,93 @@ function renderScaleCardResults(query, { open = true } = {}) {
         opt.addEventListener('mousedown', (e) => {
             e.preventDefault();
             selectScaleCard(card);
+            hideScaleCardResults();
+            if (scaleCardHint) {
+                scaleCardHint.textContent = `Cartão ${card.codeLabel} selecionado. Clique em Ativar cartão.`;
+            }
+            scaleCardCodeInput?.focus();
         });
         scaleCardResults.appendChild(opt);
     });
 
-    scaleCardResults.hidden = !open;
+    scaleCardResults.hidden = false;
     if (scaleCardHint) {
-        scaleCardHint.textContent = 'Selecione um cartão livre na lista.';
+        scaleCardHint.textContent = 'Clique no cartão para selecionar.';
     }
 }
 
-function selectScaleCard(card) {
-    if (!card) return;
-    scaleSelectedCardCode = card.code;
-    if (scaleCardCodeInput) {
-        scaleCardCodeInput.value = card.codeLabel;
+async function activateScaleCardByCode(code) {
+    if (!window.electronAPI.scaleActivateCard || scaleCardActivating) return;
+
+    const cardCode = Number(code);
+    if (!Number.isInteger(cardCode) || cardCode < 1) {
+        showStatus('Informe um número de cartão válido', 'error');
+        return;
     }
-    if (scaleCardResults) scaleCardResults.hidden = true;
-    updateScaleActionButtons();
+
+    const card = scaleTabCards.find((c) => c.code === cardCode);
+    if (card) selectScaleCard(card);
+
+    if (!isPaired) {
+        showStatus('Impressora não vinculada à empresa', 'error');
+        updateScaleActionButtons();
+        return;
+    }
+
+    const kg = lastScaleReading.kg || 0;
+    if (kg <= 0) {
+        showStatus('Aguardando peso na balança', 'error');
+        updateScaleActionButtons();
+        return;
+    }
+
+    if (!lastScaleReading.stable) {
+        showStatus('Aguarde o peso estabilizar', 'error');
+        updateScaleActionButtons();
+        return;
+    }
+
+    const priceFromInput = Number(String(scalePriceInput?.value || '0').replace(',', '.'));
+    const pricePerKg = Number.isFinite(priceFromInput) && priceFromInput >= 0
+        ? priceFromInput
+        : lastScaleReading.pricePerKg;
+    const total = kg * (Number.isFinite(pricePerKg) ? pricePerKg : 0);
+
+    scaleCardActivating = true;
+    if (scaleCardHint) scaleCardHint.textContent = `Ativando cartão ${String(cardCode).padStart(3, '0')}...`;
+
+    try {
+        const result = await window.electronAPI.scaleActivateCard({
+            code: cardCode,
+            kg,
+            pricePerKg,
+            total,
+            stable: lastScaleReading.stable,
+        });
+        if (result?.success) {
+            showStatus(result.message || 'Cartão ativado', 'success');
+            clearScaleCardSelection();
+            hideScaleCardResults();
+            await loadScaleTabCards('');
+        } else {
+            showStatus(result?.message || 'Falha ao ativar cartão', 'error');
+            if (scaleCardHint) {
+                scaleCardHint.textContent = `Cartão ${String(cardCode).padStart(3, '0')} selecionado. Corrija e tente de novo.`;
+            }
+        }
+    } catch (error) {
+        showStatus(error?.message || 'Falha ao ativar cartão', 'error');
+        if (scaleCardHint) {
+            scaleCardHint.textContent = `Cartão ${String(cardCode).padStart(3, '0')} selecionado. Corrija e tente de novo.`;
+        }
+    } finally {
+        scaleCardActivating = false;
+        updateScaleActionButtons();
+        const q = String(scaleCardCodeInput?.value || '').trim();
+        if (q && (document.activeElement === scaleCardCodeInput || scaleSelectedCardCode != null)) {
+            renderScaleCardResults(q, { open: true });
+        }
+    }
 }
 
 async function loadScaleTabCards(query = '') {
@@ -371,24 +473,14 @@ async function loadScaleTabCards(query = '') {
         const result = await window.electronAPI.scaleListTabCards({ q: query });
         scaleTabCards = Array.isArray(result?.cards) ? result.cards : [];
 
-        if (scaleSelectedCardCode != null) {
-            const stillAvailable = scaleTabCards.some((c) => c.code === Number(scaleSelectedCardCode));
-            if (!stillAvailable) {
-                scaleSelectedCardCode = null;
-            }
-        }
-
         renderScaleCardResults(scaleCardCodeInput?.value || query, {
-            open: document.activeElement === scaleCardCodeInput,
+            open: Boolean(String(scaleCardCodeInput?.value || query).trim()) &&
+                document.activeElement === scaleCardCodeInput,
         });
 
         if (!result?.success && result?.message) {
             if (scaleCardHint) {
                 scaleCardHint.textContent = 'Não foi possível carregar os cartões.';
-            }
-            if (!scaleTabCards.length && scaleCardEmpty) {
-                scaleCardEmpty.hidden = false;
-                scaleCardEmpty.textContent = 'Nenhum cartão disponível';
             }
         }
     } catch (error) {
@@ -406,6 +498,14 @@ async function loadScaleTabCards(query = '') {
 
 function scheduleScaleCardSearch() {
     const q = String(scaleCardCodeInput?.value || '').trim();
+    if (!q) {
+        hideScaleCardResults();
+        if (scaleCardHint && !scaleCardsLoading) {
+            scaleCardHint.textContent = 'Digite para buscar, clique para selecionar e depois ative.';
+        }
+        return;
+    }
+
     renderScaleCardResults(q, { open: true });
     if (scaleCardsSearchTimer) clearTimeout(scaleCardsSearchTimer);
     scaleCardsSearchTimer = setTimeout(() => {
@@ -701,35 +801,43 @@ function setupScaleListeners() {
 
     if (scaleCardCodeInput) {
         scaleCardCodeInput.addEventListener('focus', () => {
-            renderScaleCardResults(scaleCardCodeInput.value, { open: true });
             if (!scaleTabCards.length && !scaleCardsLoading) {
                 loadScaleTabCards(scaleCardCodeInput.value);
             }
+            const q = String(scaleCardCodeInput.value || '').trim();
+            if (q) renderScaleCardResults(q, { open: true });
         });
         scaleCardCodeInput.addEventListener('input', () => {
-            scaleSelectedCardCode = null;
             const typed = String(scaleCardCodeInput.value || '').trim();
             const asNumber = Number(typed);
             if (Number.isInteger(asNumber) && asNumber > 0) {
                 const exact = scaleTabCards.find((c) => c.code === asNumber);
-                if (exact) scaleSelectedCardCode = exact.code;
+                scaleSelectedCardCode = exact ? exact.code : null;
+                scaleCardCodeInput.classList.toggle('is-selected', Boolean(exact));
+            } else {
+                scaleSelectedCardCode = null;
+                scaleCardCodeInput.classList.remove('is-selected');
             }
             scheduleScaleCardSearch();
             updateScaleActionButtons();
         });
         scaleCardCodeInput.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
-                if (scaleCardResults) scaleCardResults.hidden = true;
+                hideScaleCardResults();
                 return;
             }
-            if (e.key === 'Enter' && scaleActivateCardBtn && !scaleActivateCardBtn.disabled) {
+            if (e.key === 'Enter') {
                 e.preventDefault();
-                scaleActivateCardBtn.click();
+                if (scaleActivateCardBtn && !scaleActivateCardBtn.hidden && !scaleActivateCardBtn.disabled) {
+                    scaleActivateCardBtn.click();
+                }
             }
         });
         scaleCardCodeInput.addEventListener('blur', () => {
             setTimeout(() => {
-                if (scaleCardResults) scaleCardResults.hidden = true;
+                if (scaleCardActivating) return;
+                if (scaleCardCombobox?.contains(document.activeElement)) return;
+                hideScaleCardResults();
             }, 150);
         });
     }
@@ -742,39 +850,14 @@ function setupScaleListeners() {
 
     if (scaleActivateCardBtn) {
         scaleActivateCardBtn.addEventListener('click', async () => {
-            if (!window.electronAPI.scaleActivateCard) return;
             const code = getSelectedScaleCardCode();
             if (!code) {
-                showStatus('Selecione ou informe o número do cartão', 'error');
+                showStatus('Selecione um cartão na lista', 'error');
                 return;
             }
-
-            const priceFromInput = Number(String(scalePriceInput?.value || '0').replace(',', '.'));
-            const pricePerKg = Number.isFinite(priceFromInput) && priceFromInput >= 0
-                ? priceFromInput
-                : lastScaleReading.pricePerKg;
-            const kg = lastScaleReading.kg || 0;
-            const total = kg * (Number.isFinite(pricePerKg) ? pricePerKg : 0);
-
             scaleActivateCardBtn.disabled = true;
             try {
-                const result = await window.electronAPI.scaleActivateCard({
-                    code,
-                    kg,
-                    pricePerKg,
-                    total,
-                    stable: lastScaleReading.stable,
-                });
-                if (result?.success) {
-                    showStatus(result.message || 'Cartão ativado', 'success');
-                    if (scaleCardCodeInput) scaleCardCodeInput.value = '';
-                    scaleSelectedCardCode = null;
-                    await loadScaleTabCards('');
-                } else {
-                    showStatus(result?.message || 'Falha ao ativar cartão', 'error');
-                }
-            } catch (error) {
-                showStatus(error?.message || 'Falha ao ativar cartão', 'error');
+                await activateScaleCardByCode(code);
             } finally {
                 updateScaleActionButtons();
             }
