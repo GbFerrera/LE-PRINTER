@@ -304,6 +304,59 @@ function formatItemBlock(item, index, receiptWidth = 32) {
   return lines;
 }
 
+function resolvePrintLocation(data = {}) {
+  const locationType = String(data?.print_location_type || '').toLowerCase();
+  const label = String(
+    data?.print_location_label ||
+    data?.tab_card_label ||
+    ''
+  ).trim();
+  const secondary = String(data?.print_location_secondary || '').trim();
+  const tableName = String(data?.table_name || '').trim();
+
+  if (locationType === 'card' && label) {
+    return {
+      kind: 'card',
+      sectionTitle: 'Cartão',
+      primaryLine: label,
+      secondaryLine: secondary || null,
+    };
+  }
+
+  if (label) {
+    return {
+      kind: 'table',
+      sectionTitle: 'Mesa',
+      primaryLine: label,
+      secondaryLine: null,
+    };
+  }
+
+  if (tableName) {
+    const primaryLine = tableName.toLowerCase().includes('mesa') ? tableName : `Mesa ${tableName}`;
+    return {
+      kind: 'table',
+      sectionTitle: 'Mesa',
+      primaryLine,
+      secondaryLine: null,
+    };
+  }
+
+  return null;
+}
+
+function appendPrintLocationLines(doc, data, receiptWidth, { includeSection = false } = {}) {
+  const location = resolvePrintLocation(data);
+  if (!location) return;
+
+  if (includeSection) {
+    doc.push(formatSection(location.sectionTitle, receiptWidth), 'bold');
+  }
+
+  doc.push(location.primaryLine);
+  if (location.secondaryLine) doc.push(location.secondaryLine);
+}
+
 function formatClientSection(order, receiptWidth = 32) {
   const lines = [];
   const bold = (text) => ({ text, style: 'bold' });
@@ -313,8 +366,14 @@ function formatClientSection(order, receiptWidth = 32) {
   const customerPhone = order?.customer_phone;
 
   if (orderType === 'table') {
-    lines.push(bold(formatSection('Mesa', receiptWidth)));
-    if (order?.table_name) lines.push(bold(`Mesa: ${order.table_name}`));
+    const location = resolvePrintLocation(order);
+    if (location) {
+      lines.push(bold(formatSection(location.sectionTitle, receiptWidth)));
+      lines.push(bold(location.primaryLine));
+      if (location.secondaryLine) lines.push(bold(location.secondaryLine));
+    } else {
+      lines.push(bold(formatSection('Mesa', receiptWidth)));
+    }
     if (order?.waiter_name) lines.push(bold(`Garçom: ${order.waiter_name}`));
     if (customerName) lines.push(bold(`Cliente: ${customerName}`));
     if (order?.people_count) lines.push(bold(`Pessoas: ${order.people_count}`));
@@ -421,7 +480,9 @@ function buildOrderReceipt(order, companyName, options = {}) {
   doc.push(padLine(`Pedido: ${orderNumber}`, `Data: ${createdAt}`, receiptWidth));
 
   if (platform) doc.push(`Origem: ${platform}`);
-  if (order?.order_type === 'table' && order?.table_name) doc.push(`Mesa: ${order.table_name}`);
+  if (String(order?.order_type || '').toLowerCase() === 'table') {
+    appendPrintLocationLines(doc, order, receiptWidth);
+  }
   if (order?.waiter_name) doc.push(`Garçom: ${order.waiter_name}`);
   if (order?.is_scheduled && order?.scheduled_for) {
     doc.push(`Agendado: ${formatDateTimeBR(order.scheduled_for)}`);
@@ -492,7 +553,6 @@ function buildTabReceipt(tabData, companyName, options = {}) {
   const receiptWidth = getReceiptWidth(options.paperWidth);
   const doc = createStyledReceipt(options);
   const empresa = companyName || tabData?.company_name || 'LINK EATS';
-  const tableName = tabData?.table_name || tabData?.tab_id || '-';
   const includePayment = options.includePayment !== false;
   const routeLabel = options.routeLabel ? String(options.routeLabel).trim() : '';
   const itemFilter = typeof options.itemFilter === 'function' ? options.itemFilter : null;
@@ -501,11 +561,17 @@ function buildTabReceipt(tabData, companyName, options = {}) {
     const items = (order?.items || []).filter((item) => (itemFilter ? itemFilter(item) : true));
     return { ...order, items };
   }).filter((order) => (order.items || []).length > 0);
+  const location = resolvePrintLocation(tabData);
 
   doc.push(`ESTABELECIMENTO: ${empresa}`, 'title');
   doc.push(formatSection('Comanda', receiptWidth), 'bold');
   doc.push(`Comanda: ${formatDisplayNumber(tabData?.tab_id)}`);
-  doc.push(`Mesa: ${tableName}`);
+  if (location) {
+    doc.push(location.primaryLine);
+    if (location.secondaryLine) doc.push(location.secondaryLine);
+  } else {
+    doc.push(`Mesa: ${tabData?.table_name || tabData?.tab_id || '-'}`);
+  }
   if (tabData?.customer_name) doc.push(`Responsavel: ${tabData.customer_name}`);
   if (tabData?.people_count) doc.push(`Pessoas: ${tabData.people_count}`);
   doc.push(`Pedidos: ${filteredOrders.length}`);
