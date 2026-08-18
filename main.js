@@ -1073,43 +1073,42 @@ ipcMain.handle('scale-list-tab-cards', async (_event, payload = {}) => {
   const params = new URLSearchParams();
   if (query) params.set('q', query);
   params.set('available', '1');
-  const qs = params.toString();
 
-  const endpoints = [
-    `${BACKEND_URL}/printer/tab-cards${qs ? `?${qs}` : ''}`,
-    `${BACKEND_URL}/printer/tab-cards/available${query ? `?q=${encodeURIComponent(query)}` : ''}`,
-  ];
-
-  let lastError = 'Falha ao buscar comandas';
-  for (const url of endpoints) {
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          Accept: 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        lastError = data?.message || `Erro ${response.status}`;
-        if (response.status === 404) continue;
-        return { success: false, message: lastError, cards: [] };
-      }
-
-      const cards = extractTabCardsPayload(data)
-        .map(normalizeTabCard)
-        .filter(Boolean)
-        .filter((card) => !card.active);
-
-      cards.sort((a, b) => a.code - b.code);
-      return { success: true, cards, message: cards.length ? null : 'Nenhuma comanda cadastrada' };
-    } catch (error) {
-      lastError = error.message || 'Erro ao buscar comandas';
+  try {
+    const response = await fetch(`${BACKEND_URL}/printer/tab-cards?${params.toString()}`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return {
+        success: false,
+        message: data?.message || 'Não foi possível carregar os cartões',
+        cards: [],
+      };
     }
-  }
 
-  return { success: false, message: lastError, cards: [] };
+    const cards = extractTabCardsPayload(data)
+      .map(normalizeTabCard)
+      .filter(Boolean)
+      .filter((card) => !card.active);
+
+    cards.sort((a, b) => a.code - b.code);
+    return {
+      success: true,
+      cards,
+      message: cards.length ? null : 'Nenhum cartão disponível',
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: 'Não foi possível carregar os cartões',
+      cards: [],
+    };
+  }
 });
 
 ipcMain.handle('print-order', async (event, order) => {

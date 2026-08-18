@@ -302,12 +302,12 @@ function renderScaleCardResults(query, { open = true } = {}) {
 
     if (!scaleTabCards.length) {
         scaleCardEmpty.hidden = false;
-        scaleCardEmpty.textContent = 'Nenhuma comanda cadastrada';
+        scaleCardEmpty.textContent = 'Nenhum cartão disponível';
         scaleCardResults.hidden = true;
         if (scaleCardHint) {
             scaleCardHint.textContent = scaleCardsLoading
-                ? 'Buscando comandas...'
-                : 'Nenhuma comanda disponível. Clique em ↻ para buscar novamente.';
+                ? 'Carregando cartões...'
+                : 'Nenhum cartão livre no momento.';
         }
         return;
     }
@@ -319,11 +319,11 @@ function renderScaleCardResults(query, { open = true } = {}) {
         if (open) {
             const emptyOpt = document.createElement('div');
             emptyOpt.className = 'scale-card-option is-empty';
-            emptyOpt.textContent = 'Nenhuma comanda encontrada';
+            emptyOpt.textContent = 'Nenhum cartão encontrado';
             scaleCardResults.appendChild(emptyOpt);
         }
         if (scaleCardHint) {
-            scaleCardHint.textContent = 'Nenhuma comanda com esse número. Ativas não aparecem na lista.';
+            scaleCardHint.textContent = 'Cartão não encontrado ou já em uso.';
         }
         return;
     }
@@ -347,7 +347,7 @@ function renderScaleCardResults(query, { open = true } = {}) {
 
     scaleCardResults.hidden = !open;
     if (scaleCardHint) {
-        scaleCardHint.textContent = 'Selecione uma comanda disponível. Ativas não aparecem.';
+        scaleCardHint.textContent = 'Selecione um cartão livre na lista.';
     }
 }
 
@@ -365,7 +365,7 @@ async function loadScaleTabCards(query = '') {
     if (!window.electronAPI.scaleListTabCards) return;
     scaleCardsLoading = true;
     if (scaleCardRefreshBtn) scaleCardRefreshBtn.disabled = true;
-    if (scaleCardHint) scaleCardHint.textContent = 'Buscando comandas...';
+    if (scaleCardHint) scaleCardHint.textContent = 'Carregando cartões...';
 
     try {
         const result = await window.electronAPI.scaleListTabCards({ q: query });
@@ -383,17 +383,19 @@ async function loadScaleTabCards(query = '') {
         });
 
         if (!result?.success && result?.message) {
-            if (scaleCardHint) scaleCardHint.textContent = result.message;
+            if (scaleCardHint) {
+                scaleCardHint.textContent = 'Não foi possível carregar os cartões.';
+            }
             if (!scaleTabCards.length && scaleCardEmpty) {
                 scaleCardEmpty.hidden = false;
-                scaleCardEmpty.textContent = 'Nenhuma comanda cadastrada';
+                scaleCardEmpty.textContent = 'Nenhum cartão disponível';
             }
         }
     } catch (error) {
         scaleTabCards = [];
         renderScaleCardResults('', { open: false });
         if (scaleCardHint) {
-            scaleCardHint.textContent = error?.message || 'Falha ao buscar comandas';
+            scaleCardHint.textContent = 'Não foi possível carregar os cartões.';
         }
     } finally {
         scaleCardsLoading = false;
@@ -743,7 +745,7 @@ function setupScaleListeners() {
             if (!window.electronAPI.scaleActivateCard) return;
             const code = getSelectedScaleCardCode();
             if (!code) {
-                showStatus('Selecione ou informe o número da comanda', 'error');
+                showStatus('Selecione ou informe o número do cartão', 'error');
                 return;
             }
 
