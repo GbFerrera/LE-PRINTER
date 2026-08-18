@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPaperWidth: () => ipcRenderer.invoke('get-paper-width'),
   printFontSample: () => ipcRenderer.invoke('print-font-sample'),
   printScaleTicket: (payload) => ipcRenderer.invoke('print-scale-ticket', payload),
+  scaleActivateCard: (payload) => ipcRenderer.invoke('scale-activate-card', payload),
 
   // Printing
   printOrder: (order) => ipcRenderer.invoke('print-order', order),

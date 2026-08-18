@@ -928,6 +928,61 @@ ipcMain.handle('print-scale-ticket', async (event, payload = {}) => {
   }
 });
 
+ipcMain.handle('scale-activate-card', async (_event, payload = {}) => {
+  const token = store.get('deviceToken', null) || deviceToken;
+  if (!token) {
+    return { success: false, message: 'Impressora não vinculada à empresa' };
+  }
+
+  const code = Number(payload?.code);
+  const status = scaleService.getStatus();
+  const kg = Number(payload?.kg ?? status.kg);
+  const pricePerKg = Number(payload?.pricePerKg ?? status.pricePerKg);
+  const total = Number(payload?.total ?? status.total);
+  const stable = payload?.stable ?? status.stable;
+
+  if (!Number.isInteger(code) || code < 1) {
+    return { success: false, message: 'Informe o número do cartão' };
+  }
+  if (!Number.isFinite(kg) || kg <= 0) {
+    return { success: false, message: 'Peso inválido. Coloque o item na balança.' };
+  }
+  if (!stable) {
+    return { success: false, message: 'Aguarde o peso estabilizar' };
+  }
+
+  try {
+    const response = await fetch(`${BACKEND_URL}/printer/tab-cards/activate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        code,
+        weight_kg: kg,
+        price_per_kg: Number.isFinite(pricePerKg) ? pricePerKg : 0,
+        total: Number.isFinite(total) ? total : kg * (Number.isFinite(pricePerKg) ? pricePerKg : 0),
+        stable: true,
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return { success: false, message: data?.message || 'Falha ao ativar cartão' };
+    }
+
+    return {
+      success: true,
+      message: `Cartão ${String(code).padStart(3, '0')} ativado`,
+      card: data.card,
+      tab: data.tab,
+    };
+  } catch (error) {
+    return { success: false, message: error.message || 'Erro ao ativar cartão' };
+  }
+});
+
 ipcMain.handle('print-order', async (event, order) => {
   const result = await printOrder(order);
   return result;

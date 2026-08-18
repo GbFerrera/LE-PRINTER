@@ -208,7 +208,17 @@
                                         <strong id="scale-total-display">R$ 0,00</strong>
                                     </div>
                                 </div>
-                                <button id="scale-print-btn" class="btn-primary scale-print-btn" type="button">
+
+                                <div class="scale-card-activation">
+                                    <label for="scale-card-code-input">Número do cartão</label>
+                                    <input id="scale-card-code-input" type="number" min="1" step="1" placeholder="Ex: 12" inputmode="numeric">
+                                    <button id="scale-activate-card-btn" class="btn-primary scale-activate-btn" type="button" disabled>
+                                        Ativar cartão
+                                    </button>
+                                    <small class="scale-hint">Informe o cartão após o peso estabilizar.</small>
+                                </div>
+
+                                <button id="scale-print-btn" class="btn-secondary scale-print-btn" type="button">
                                     Imprimir pesagem
                                 </button>
                             </div>

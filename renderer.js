@@ -52,6 +52,8 @@ const scaleSendPriceBtn = document.getElementById('scale-send-price-btn');
 const scalePriceDisplay = document.getElementById('scale-price-display');
 const scaleTotalDisplay = document.getElementById('scale-total-display');
 const scalePrintBtn = document.getElementById('scale-print-btn');
+const scaleCardCodeInput = document.getElementById('scale-card-code-input');
+const scaleActivateCardBtn = document.getElementById('scale-activate-card-btn');
 let lastScaleReading = { kg: 0, pricePerKg: 0, total: 0, stable: false };
 let lastScalePortPath = '';
 let pendingUpdateVersion = null;
@@ -250,6 +252,19 @@ function formatScaleMoney(value) {
     return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+function updateScaleActionButtons() {
+    const hasWeight = lastScaleReading.kg > 0;
+    const cardCode = String(scaleCardCodeInput?.value || '').trim();
+    const canActivate = hasWeight && lastScaleReading.stable && cardCode.length > 0 && isPaired;
+
+    if (scalePrintBtn) {
+        scalePrintBtn.disabled = !hasWeight;
+    }
+    if (scaleActivateCardBtn) {
+        scaleActivateCardBtn.disabled = !canActivate;
+    }
+}
+
 function applyScalePricing(data) {
     const price = Number(data?.pricePerKg);
     const total = Number(data?.total);
@@ -273,9 +288,7 @@ function applyScalePricing(data) {
     if (scalePriceInput && Number.isFinite(price) && document.activeElement !== scalePriceInput) {
         scalePriceInput.value = price ? String(price) : '0';
     }
-    if (scalePrintBtn) {
-        scalePrintBtn.disabled = !(lastScaleReading.kg > 0);
-    }
+    updateScaleActionButtons();
 }
 
 function applyScaleReading(reading) {
@@ -531,7 +544,56 @@ function setupScaleListeners() {
             } catch (error) {
                 showStatus(error?.message || 'Falha ao imprimir pesagem', 'error');
             } finally {
-                scalePrintBtn.disabled = !(lastScaleReading.kg > 0);
+                updateScaleActionButtons();
+            }
+        });
+    }
+
+    if (scaleCardCodeInput) {
+        scaleCardCodeInput.addEventListener('input', updateScaleActionButtons);
+        scaleCardCodeInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && scaleActivateCardBtn && !scaleActivateCardBtn.disabled) {
+                e.preventDefault();
+                scaleActivateCardBtn.click();
+            }
+        });
+    }
+
+    if (scaleActivateCardBtn) {
+        scaleActivateCardBtn.addEventListener('click', async () => {
+            if (!window.electronAPI.scaleActivateCard) return;
+            const code = Number(String(scaleCardCodeInput?.value || '').trim());
+            if (!Number.isInteger(code) || code < 1) {
+                showStatus('Informe o número do cartão', 'error');
+                return;
+            }
+
+            const priceFromInput = Number(String(scalePriceInput?.value || '0').replace(',', '.'));
+            const pricePerKg = Number.isFinite(priceFromInput) && priceFromInput >= 0
+                ? priceFromInput
+                : lastScaleReading.pricePerKg;
+            const kg = lastScaleReading.kg || 0;
+            const total = kg * (Number.isFinite(pricePerKg) ? pricePerKg : 0);
+
+            scaleActivateCardBtn.disabled = true;
+            try {
+                const result = await window.electronAPI.scaleActivateCard({
+                    code,
+                    kg,
+                    pricePerKg,
+                    total,
+                    stable: lastScaleReading.stable,
+                });
+                if (result?.success) {
+                    showStatus(result.message || 'Cartão ativado', 'success');
+                    if (scaleCardCodeInput) scaleCardCodeInput.value = '';
+                } else {
+                    showStatus(result?.message || 'Falha ao ativar cartão', 'error');
+                }
+            } catch (error) {
+                showStatus(error?.message || 'Falha ao ativar cartão', 'error');
+            } finally {
+                updateScaleActionButtons();
             }
         });
     }
