@@ -19,6 +19,11 @@ const {
   DEFAULT_FONT_SCALE,
 } = require('./printFormat');
 const { ScaleService } = require('./scale/ScaleService');
+const {
+  normalizePrinterRouting,
+  splitOrderPrintJobs,
+  splitTabPrintJobs,
+} = require('./printerRouting');
 
 // Configurações para resolver problemas no Windows
 app.disableHardwareAcceleration();
@@ -64,7 +69,14 @@ let companyName = store.get('companyName', null);
 let printerReady = false;
 let reconnectTimer = null;
 let isConnecting = false;
-let selectedPrinter = null;
+let selectedPrinter = store.get('selectedPrinter', null);
+let printerRouting = normalizePrinterRouting({
+  defaultPrinter: store.get('selectedPrinter', null),
+  routes: store.get('printerRoutes', []),
+});
+if (!printerRouting.defaultPrinter && selectedPrinter) {
+  printerRouting.defaultPrinter = selectedPrinter;
+}
 let fontScale = normalizeFontScale(store.get('fontScale', store.get('fontSize', DEFAULT_FONT_SCALE)));
 let paperWidth = store.get('paperWidth', '58mm') === '80mm' ? '80mm' : '58mm';
 const recentlyPrinted = new Set(); // deduplication guard
@@ -112,22 +124,60 @@ function getPrintOptions() {
   return { paperWidth, fontScale };
 }
 
-function buildReceiptForOrder(order) {
-  const options = getPrintOptions();
+function getPrinterRouting() {
+  return normalizePrinterRouting({
+    defaultPrinter: printerRouting.defaultPrinter || selectedPrinter || null,
+    routes: printerRouting.routes || [],
+  });
+}
+
+function persistPrinterRouting(nextRouting) {
+  printerRouting = normalizePrinterRouting(nextRouting);
+  selectedPrinter = printerRouting.defaultPrinter || null;
+  store.set('printerRoutes', printerRouting.routes);
+  store.set('selectedPrinter', selectedPrinter);
+  return printerRouting;
+}
+
+function buildReceiptForOrder(order, job = {}) {
+  const options = {
+    ...getPrintOptions(),
+    items: job.order?.items,
+    includePayment: job.includePayment,
+    includeClient: job.includeClient,
+    routeLabel: job.routeLabel,
+    itemFilter: job.itemFilter,
+  };
+
   if (order?.kind === 'tab_print') {
-    return buildTabReceipt(order, companyName, options);
+    return buildTabReceipt(job.tabData || order, companyName, options);
   }
-  return buildOrderReceipt(order, companyName, options);
+  return buildOrderReceipt(job.order || order, companyName, options);
 }
 
 function buildPrinterCommandPayload(extra = {}) {
+  const routing = getPrinterRouting();
   return {
     font_scale: fontScale,
     paper_width: paperWidth,
-    printer: selectedPrinter || undefined,
+    printer: extra.printer || routing.defaultPrinter || selectedPrinter || undefined,
     // Logo removida; cupom em imagem (GDI) para controle da fonte em todos os tamanhos
     ...extra,
   };
+}
+
+async function sendReceiptToPrinter(receipt, printerName) {
+  const response = await sendPrinterCommand(buildPrinterCommandPayload({
+    action: 'print',
+    receipt,
+    text: documentToPlainText(receipt),
+    printer: printerName || undefined,
+  }));
+
+  if (response.success) {
+    return { success: true, mode: 'printer', message: response.message || 'Enviado para a impressora' };
+  }
+  return { success: false, mode: 'printer', message: response.error || 'Falha ao imprimir' };
 }
 
 // Backend configuration
@@ -420,31 +470,59 @@ function sendPrinterCommand(command) {
 // Print order function
 // Returns { success, mode: 'simulation'|'printer', message }
 async function printOrder(order) {
+  const routing = getPrinterRouting();
+  const jobs = order?.kind === 'tab_print'
+    ? splitTabPrintJobs(order, routing)
+    : splitOrderPrintJobs(order, routing);
+
   if (!printerProcess || !printerReady) {
     console.log('=== SIMULAÇÃO DE IMPRESSÃO ===');
-    console.log(order?.kind === 'tab_print'
-      ? formatTabText(order, companyName, getPrintOptions())
-      : formatOrderText(order, companyName, getPrintOptions()));
+    for (const job of jobs) {
+      const target = job.printer || routing.defaultPrinter || 'padrão do sistema';
+      console.log(`--- Via: ${target}${job.partial ? ' (parcial)' : ''} ---`);
+      console.log(order?.kind === 'tab_print'
+        ? formatTabText(job.tabData || order, companyName, {
+          ...getPrintOptions(),
+          includePayment: job.includePayment,
+          routeLabel: job.routeLabel,
+          itemFilter: job.itemFilter,
+        })
+        : formatOrderText(job.order || order, companyName, {
+          ...getPrintOptions(),
+          items: job.order?.items,
+          includePayment: job.includePayment,
+          includeClient: job.includeClient,
+          routeLabel: job.routeLabel,
+        }));
+    }
     console.log('=== FIM DA SIMULAÇÃO ===');
-    return { success: true, mode: 'simulation', message: 'Sem impressora conectada — enviado para fila de simulação' };
+    const count = jobs.length;
+    return {
+      success: true,
+      mode: 'simulation',
+      message: count > 1
+        ? `${count} vias enviadas para simulação`
+        : 'Sem impressora conectada — enviado para fila de simulação',
+    };
   }
 
   try {
-    const receipt = buildReceiptForOrder(order);
-    const response = await sendPrinterCommand(buildPrinterCommandPayload({
-      action: 'print',
-      receipt,
-      text: documentToPlainText(receipt),
-      printer: selectedPrinter || undefined,
-    }));
-
-    if (response.success) {
-      console.log('Order printed successfully:', response.message);
-      return { success: true, mode: 'printer', message: response.message || 'Enviado para a impressora' };
-    } else {
-      console.error('Failed to print order:', response.error);
-      return { success: false, mode: 'printer', message: response.error };
+    const messages = [];
+    for (const job of jobs) {
+      const receipt = buildReceiptForOrder(order, job);
+      const result = await sendReceiptToPrinter(receipt, job.printer || routing.defaultPrinter);
+      if (!result.success) {
+        return result;
+      }
+      messages.push(result.message);
     }
+
+    const count = jobs.length;
+    return {
+      success: true,
+      mode: 'printer',
+      message: count > 1 ? `${count} vias impressas` : (messages[0] || 'Enviado para a impressora'),
+    };
   } catch (error) {
     console.error('Failed to print order:', error);
     return { success: false, mode: 'printer', message: error.message };
@@ -773,14 +851,70 @@ ipcMain.handle('list-printers', async () => {
 });
 
 ipcMain.handle('set-printer', (event, printerName) => {
-  selectedPrinter = printerName || null;
-  store.set('selectedPrinter', selectedPrinter);
+  persistPrinterRouting({
+    ...getPrinterRouting(),
+    defaultPrinter: printerName || null,
+  });
   return { success: true };
 });
 
 ipcMain.handle('get-selected-printer', () => {
-  selectedPrinter = store.get('selectedPrinter', null);
+  const routing = getPrinterRouting();
+  selectedPrinter = routing.defaultPrinter || null;
   return { printer: selectedPrinter };
+});
+
+ipcMain.handle('get-printer-routing', () => {
+  return { success: true, routing: getPrinterRouting() };
+});
+
+ipcMain.handle('set-printer-routing', (_event, routing) => {
+  persistPrinterRouting(routing || {});
+  return { success: true, routing: getPrinterRouting() };
+});
+
+ipcMain.handle('list-menu-categories', async () => {
+  const token = store.get('deviceToken', null) || deviceToken;
+  if (!token) {
+    return { success: false, message: 'Impressora não vinculada à empresa', categories: [] };
+  }
+
+  try {
+    const response = await fetch(`${BACKEND_URL}/printer/categories`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return {
+        success: false,
+        message: data?.message || 'Não foi possível carregar as categorias',
+        categories: [],
+      };
+    }
+
+    const categories = (Array.isArray(data?.categories) ? data.categories : [])
+      .map((category) => {
+        if (!category || typeof category !== 'object') return null;
+        const id = String(category.id || '').trim();
+        const name = String(category.name || '').trim();
+        if (!id || !name) return null;
+        return { id, name, order: Number(category.order) || 0 };
+      })
+      .filter(Boolean)
+      .sort((a, b) => (a.order - b.order) || a.name.localeCompare(b.name, 'pt-BR'));
+
+    return { success: true, categories };
+  } catch (error) {
+    return {
+      success: false,
+      message: 'Não foi possível carregar as categorias',
+      categories: [],
+    };
+  }
 });
 
 ipcMain.handle('set-font-size', (_event, size) => {

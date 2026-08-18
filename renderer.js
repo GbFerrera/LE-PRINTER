@@ -60,6 +60,11 @@ const scaleCardHint = document.getElementById('scale-card-hint');
 const scaleCardCombobox = document.getElementById('scale-card-combobox');
 const scaleProductSelect = document.getElementById('scale-product-select');
 const scaleProductHint = document.getElementById('scale-product-hint');
+const printerRoutesList = document.getElementById('printer-routes-list');
+const addPrinterRouteBtn = document.getElementById('add-printer-route-btn');
+let availablePrinters = [];
+let menuCategories = [];
+let printerRouting = { defaultPrinter: null, routes: [] };
 let lastScaleReading = { kg: 0, pricePerKg: 0, total: 0, stable: false };
 let lastScalePortPath = '';
 let scaleTabCards = [];
@@ -115,6 +120,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadPrinters().catch((error) => {
         console.error('Error loading printers:', error);
     });
+    loadPrinterRouting().catch((error) => {
+        console.error('Error loading printer routing:', error);
+    });
+    loadMenuCategories().catch((error) => {
+        console.error('Error loading menu categories:', error);
+    });
 });
 
 // Restore state on startup and auto-reconnect when already paired
@@ -163,6 +174,7 @@ async function loadPrinters() {
         ]);
         const printers = printersRes.printers || [];
         const selected = selectedRes.printer || '';
+        availablePrinters = printers;
 
         // Keep the default option, repopulate the rest
         printerSelect.innerHTML = '<option value="">-- Padrão do sistema --</option>';
@@ -173,6 +185,8 @@ async function loadPrinters() {
             if (name === selected) opt.selected = true;
             printerSelect.appendChild(opt);
         });
+
+        renderPrinterRoutes();
 
         if (printers.length === 0) {
             const opt = document.createElement('option');
@@ -198,6 +212,158 @@ async function loadPrinters() {
             refreshPrintersBtn.textContent = 'Atualizar Impressoras';
         }
     }
+}
+
+function createRouteId() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    return `route-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function getAssignedCategoryIds(excludeRouteId = null) {
+    const assigned = new Set();
+    for (const route of printerRouting.routes || []) {
+        if (excludeRouteId && route.id === excludeRouteId) continue;
+        for (const categoryId of route.categoryIds || []) {
+            assigned.add(String(categoryId));
+        }
+    }
+    return assigned;
+}
+
+function buildPrinterOptions(selectedPrinterName = '') {
+    const options = ['<option value="">-- Selecione a impressora --</option>'];
+    for (const name of availablePrinters) {
+        const selected = name === selectedPrinterName ? ' selected' : '';
+        options.push(`<option value="${escapeHtml(name)}"${selected}>${escapeHtml(name)}</option>`);
+    }
+    return options.join('');
+}
+
+function escapeHtml(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+async function loadPrinterRouting() {
+    if (!window.electronAPI.getPrinterRouting) return;
+    const result = await window.electronAPI.getPrinterRouting();
+    printerRouting = result?.routing || { defaultPrinter: null, routes: [] };
+    if (printerSelect && printerRouting.defaultPrinter) {
+        printerSelect.value = printerRouting.defaultPrinter;
+    }
+    renderPrinterRoutes();
+}
+
+async function savePrinterRouting() {
+    if (!window.electronAPI.setPrinterRouting) return;
+    const payload = {
+        defaultPrinter: printerSelect?.value || null,
+        routes: (printerRouting.routes || []).map((route) => ({
+            id: route.id,
+            printer: route.printer || '',
+            categoryIds: Array.isArray(route.categoryIds) ? route.categoryIds : [],
+        })),
+    };
+    const result = await window.electronAPI.setPrinterRouting(payload);
+    printerRouting = result?.routing || payload;
+}
+
+async function loadMenuCategories() {
+    if (!window.electronAPI.listMenuCategories) return;
+    const result = await window.electronAPI.listMenuCategories();
+    menuCategories = result?.success ? (result.categories || []) : [];
+    renderPrinterRoutes();
+}
+
+function renderPrinterRoutes() {
+    if (!printerRoutesList) return;
+
+    const routes = Array.isArray(printerRouting.routes) ? printerRouting.routes : [];
+    if (!routes.length) {
+        printerRoutesList.innerHTML = '<p class="printer-routes-empty">Nenhuma impressora extra configurada.</p>';
+        return;
+    }
+
+    printerRoutesList.innerHTML = routes.map((route) => {
+        const assignedElsewhere = getAssignedCategoryIds(route.id);
+        const categoryChecks = menuCategories.length
+            ? menuCategories.map((category) => {
+                const checked = (route.categoryIds || []).includes(category.id) ? ' checked' : '';
+                const disabled = assignedElsewhere.has(category.id) ? ' disabled' : '';
+                return `
+                    <label class="printer-route-category${disabled ? ' is-disabled' : ''}">
+                        <input type="checkbox" data-route-id="${escapeHtml(route.id)}" data-category-id="${escapeHtml(category.id)}"${checked}${disabled}>
+                        <span>${escapeHtml(category.name)}</span>
+                    </label>
+                `;
+            }).join('')
+            : '<p class="settings-help">Conecte à empresa para carregar as categorias do cardápio.</p>';
+
+        return `
+            <div class="printer-route-card" data-route-id="${escapeHtml(route.id)}">
+                <div class="printer-route-header">
+                    <strong>Impressora adicional</strong>
+                    <button type="button" class="btn-link printer-route-remove" data-route-id="${escapeHtml(route.id)}">Remover</button>
+                </div>
+                <select class="printer-route-select" data-route-id="${escapeHtml(route.id)}">
+                    ${buildPrinterOptions(route.printer || '')}
+                </select>
+                <div class="printer-route-categories">${categoryChecks}</div>
+            </div>
+        `;
+    }).join('');
+
+    printerRoutesList.querySelectorAll('.printer-route-select').forEach((select) => {
+        select.addEventListener('change', async () => {
+            const routeId = select.dataset.routeId;
+            const route = printerRouting.routes.find((item) => item.id === routeId);
+            if (!route) return;
+            route.printer = select.value || '';
+            await savePrinterRouting();
+        });
+    });
+
+    printerRoutesList.querySelectorAll('.printer-route-category input[type="checkbox"]').forEach((input) => {
+        input.addEventListener('change', async () => {
+            const routeId = input.dataset.routeId;
+            const categoryId = input.dataset.categoryId;
+            const route = printerRouting.routes.find((item) => item.id === routeId);
+            if (!route) return;
+            const ids = new Set(route.categoryIds || []);
+            if (input.checked) ids.add(categoryId);
+            else ids.delete(categoryId);
+            route.categoryIds = Array.from(ids);
+            await savePrinterRouting();
+            renderPrinterRoutes();
+        });
+    });
+
+    printerRoutesList.querySelectorAll('.printer-route-remove').forEach((button) => {
+        button.addEventListener('click', async () => {
+            const routeId = button.dataset.routeId;
+            printerRouting.routes = (printerRouting.routes || []).filter((route) => route.id !== routeId);
+            await savePrinterRouting();
+            renderPrinterRoutes();
+            showStatus('Impressora removida da configuração', 'success');
+        });
+    });
+}
+
+async function addPrinterRoute() {
+    printerRouting.routes = Array.isArray(printerRouting.routes) ? printerRouting.routes : [];
+    printerRouting.routes.push({
+        id: createRouteId(),
+        printer: '',
+        categoryIds: [],
+    });
+    await savePrinterRouting();
+    renderPrinterRoutes();
+    showStatus('Nova impressora adicionada — selecione o equipamento e as categorias', 'info');
 }
 
 // Load auto-print status
@@ -1164,9 +1330,13 @@ function setupEventListeners() {
     printerSelect.addEventListener('change', async () => {
         const name = printerSelect.value || null;
         await window.electronAPI.setPrinter(name);
-        showStatus(name ? `Impressora selecionada: ${name}` : 'Usando impressora padrão do sistema', 'success');
+        printerRouting.defaultPrinter = name;
+        showStatus(name ? `Impressora principal: ${name}` : 'Usando impressora padrão do sistema', 'success');
     });
     refreshPrintersBtn.addEventListener('click', loadPrinters);
+    if (addPrinterRouteBtn) {
+        addPrinterRouteBtn.addEventListener('click', addPrinterRoute);
+    }
 
     if (fontScaleSelect) {
         fontScaleSelect.addEventListener('change', async () => {
@@ -1224,6 +1394,11 @@ function setupEventListeners() {
     // WebSocket event listeners
     window.electronAPI.onWebSocketStatus((event, data) => {
         updateConnectionStatus(data.connected);
+        if (data.connected) {
+            loadMenuCategories().catch((error) => {
+                console.error('Error loading menu categories:', error);
+            });
+        }
     });
 
     window.electronAPI.onDeviceAccessRevoked((event, data) => {

@@ -72,13 +72,19 @@
                                 <span>Impressão Automática</span>
                             </div>
 
-                            <h4>Impressora</h4>
+                            <h4>Impressora principal</h4>
                             <div class="form-group">
                                 <select id="printer-select" style="width:100%;padding:8px;border:2px solid #e1e5e9;border-radius:8px;font-size:14px;">
                                     <option value="">-- Padrão do sistema --</option>
                                 </select>
                             </div>
-                            <button id="refresh-printers-btn" class="btn-secondary" style="width:100%;margin-bottom:10px;">Atualizar Impressoras</button>
+                            <small class="settings-help">Cupom completo e itens sem categoria definida nas rotas abaixo.</small>
+                            <button id="refresh-printers-btn" class="btn-secondary" style="width:100%;margin:10px 0;">Atualizar Impressoras</button>
+
+                            <h4>Impressoras por categoria</h4>
+                            <p class="settings-help">Configure impressoras extras e escolha quais categorias cada uma imprime (ex.: cozinha, bar).</p>
+                            <div id="printer-routes-list" class="printer-routes-list"></div>
+                            <button id="add-printer-route-btn" class="btn-secondary" type="button" style="width:100%;margin-bottom:10px;">+ Adicionar impressora</button>
 
                             <h4>Fonte</h4>
                             <div class="form-group font-scale-group">

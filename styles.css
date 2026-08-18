@@ -385,6 +385,84 @@ button:disabled {
     font-weight: 600;
 }
 
+.settings-help {
+    display: block;
+    color: #888;
+    font-size: 12px;
+    line-height: 1.4;
+    margin-bottom: 8px;
+}
+
+.printer-routes-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.printer-routes-empty {
+    color: #888;
+    font-size: 13px;
+    margin: 0 0 8px;
+}
+
+.printer-route-card {
+    border: 1px solid #e1e5e9;
+    border-radius: 10px;
+    padding: 12px;
+    background: #fafbfc;
+}
+
+.printer-route-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    font-size: 13px;
+}
+
+.printer-route-select {
+    width: 100%;
+    padding: 8px;
+    border: 2px solid #e1e5e9;
+    border-radius: 8px;
+    font-size: 13px;
+    margin-bottom: 8px;
+}
+
+.printer-route-categories {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 160px;
+    overflow-y: auto;
+}
+
+.printer-route-category {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #444;
+}
+
+.printer-route-category.is-disabled {
+    opacity: 0.55;
+}
+
+.btn-link {
+    background: none;
+    border: none;
+    color: #c0392b;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 0;
+}
+
+.btn-link:hover {
+    text-decoration: underline;
+}
+
 .settings-divider {
     border: none;
     border-top: 1px solid #e9ecef;

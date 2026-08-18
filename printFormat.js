@@ -403,10 +403,18 @@ function buildOrderReceipt(order, companyName, options = {}) {
   const orderNumber = formatDisplayNumber(order?.id, order?.order_number);
   const createdAt = formatDateTimeBR(order?.created_at);
   const platform = getPlatformLabel(order?.platform);
-  const productsSubtotal = calculateProductsSubtotal(order);
-  const deliveryFee = order?.order_type === 'delivery' ? Number(order?.delivery_fee || 0) : 0;
-  const discount = Number(order?.discount || 0);
-  const total = Number(order?.total || 0) || Math.max(0, productsSubtotal + deliveryFee - discount);
+  const items = Array.isArray(options.items) ? options.items : (order?.items || []);
+  const includePayment = options.includePayment !== false;
+  const includeClient = options.includeClient !== false;
+  const routeLabel = options.routeLabel ? String(options.routeLabel).trim() : '';
+  const headerTitle = options.headerTitle || 'NOVO PEDIDO';
+  const itemsOrder = { ...order, items };
+  const productsSubtotal = calculateProductsSubtotal(itemsOrder);
+  const deliveryFee = includePayment && order?.order_type === 'delivery' ? Number(order?.delivery_fee || 0) : 0;
+  const discount = includePayment ? Number(order?.discount || 0) : 0;
+  const total = includePayment
+    ? (Number(order?.total || 0) || Math.max(0, productsSubtotal + deliveryFee - discount))
+    : productsSubtotal;
   const paymentSummary = resolvePaymentSummary(order);
 
   doc.push(`ESTABELECIMENTO: ${empresa}`, 'title');
@@ -418,11 +426,12 @@ function buildOrderReceipt(order, companyName, options = {}) {
   if (order?.is_scheduled && order?.scheduled_for) {
     doc.push(`Agendado: ${formatDateTimeBR(order.scheduled_for)}`);
   }
+  if (routeLabel) doc.push(routeLabel);
   doc.push('');
 
   doc.push(formatSection('Itens do Pedido', receiptWidth), 'bold');
-  if (order?.items?.length) {
-    order.items.forEach((item, index) => {
+  if (items.length) {
+    items.forEach((item, index) => {
       doc.pushAll(formatItemBlock(item, index, receiptWidth));
     });
   } else {
@@ -430,13 +439,18 @@ function buildOrderReceipt(order, companyName, options = {}) {
     doc.push('');
   }
 
-  doc.push(formatSection('Pagamento', receiptWidth), 'bold');
-  doc.push(`Total de produtos: ${formatMoneyBR(productsSubtotal)}`);
-  if (deliveryFee > 0) doc.push(`Taxa de entrega: ${formatMoneyBR(deliveryFee)}`);
-  if (discount > 0) doc.push(`Desconto: -${formatMoneyBR(discount)}`);
-  doc.push(`TOTAL: ${formatMoneyBR(total)}`, 'total');
-  doc.push(`Forma de pagamento: ${paymentSummary}`);
-  doc.push('');
+  if (includePayment) {
+    doc.push(formatSection('Pagamento', receiptWidth), 'bold');
+    doc.push(`Total de produtos: ${formatMoneyBR(productsSubtotal)}`);
+    if (deliveryFee > 0) doc.push(`Taxa de entrega: ${formatMoneyBR(deliveryFee)}`);
+    if (discount > 0) doc.push(`Desconto: -${formatMoneyBR(discount)}`);
+    doc.push(`TOTAL: ${formatMoneyBR(total)}`, 'total');
+    doc.push(`Forma de pagamento: ${paymentSummary}`);
+    doc.push('');
+  } else if (items.length > 0) {
+    doc.push(`Subtotal desta via: ${formatMoneyBR(productsSubtotal)}`);
+    doc.push('');
+  }
 
   const generalObs = String(order?.observation || '')
     .split('\n')
@@ -450,11 +464,13 @@ function buildOrderReceipt(order, companyName, options = {}) {
     .join('\n')
     .trim();
 
-  const clientLines = formatClientSection(order, receiptWidth);
-  doc.pushAll(clientLines);
-  if (clientLines.length > 0) doc.push('');
+  if (includeClient) {
+    const clientLines = formatClientSection(order, receiptWidth);
+    doc.pushAll(clientLines);
+    if (clientLines.length > 0) doc.push('');
+  }
 
-  if (generalObs && !paymentSummary.includes(generalObs)) {
+  if (includePayment && generalObs && !paymentSummary.includes(generalObs)) {
     doc.push(formatSection('Observacoes', receiptWidth), 'bold');
     doc.pushWrapped(generalObs, 'normal', receiptWidth);
     doc.push('');
@@ -469,7 +485,7 @@ function buildOrderReceipt(order, companyName, options = {}) {
   doc.push('');
   doc.push('');
 
-  return doc.toDocument({ kind: 'order', header_title: 'NOVO PEDIDO' });
+  return doc.toDocument({ kind: 'order', header_title: headerTitle });
 }
 
 function buildTabReceipt(tabData, companyName, options = {}) {
@@ -477,7 +493,14 @@ function buildTabReceipt(tabData, companyName, options = {}) {
   const doc = createStyledReceipt(options);
   const empresa = companyName || tabData?.company_name || 'LINK EATS';
   const tableName = tabData?.table_name || tabData?.tab_id || '-';
+  const includePayment = options.includePayment !== false;
+  const routeLabel = options.routeLabel ? String(options.routeLabel).trim() : '';
+  const itemFilter = typeof options.itemFilter === 'function' ? options.itemFilter : null;
   const orders = Array.isArray(tabData?.orders) ? tabData.orders : [];
+  const filteredOrders = orders.map((order) => {
+    const items = (order?.items || []).filter((item) => (itemFilter ? itemFilter(item) : true));
+    return { ...order, items };
+  }).filter((order) => (order.items || []).length > 0);
 
   doc.push(`ESTABELECIMENTO: ${empresa}`, 'title');
   doc.push(formatSection('Comanda', receiptWidth), 'bold');
@@ -485,11 +508,13 @@ function buildTabReceipt(tabData, companyName, options = {}) {
   doc.push(`Mesa: ${tableName}`);
   if (tabData?.customer_name) doc.push(`Responsavel: ${tabData.customer_name}`);
   if (tabData?.people_count) doc.push(`Pessoas: ${tabData.people_count}`);
-  doc.push(`Pedidos: ${orders.length}`);
+  doc.push(`Pedidos: ${filteredOrders.length}`);
   if (tabData?.opened_at) doc.push(`Aberta em: ${formatDateTimeBR(tabData.opened_at)}`);
+  if (routeLabel) doc.push(routeLabel);
   doc.push('');
 
-  orders.forEach((order, orderIdx) => {
+  let tabItemsSubtotal = 0;
+  filteredOrders.forEach((order, orderIdx) => {
     doc.push(formatSection(`Pedido ${orderIdx + 1}`, receiptWidth), 'bold');
     doc.push(`Pedido: ${formatDisplayNumber(order?.id, order?.order_number)}`);
     doc.push(`Hora: ${formatDateTimeBR(order?.created_at)}`);
@@ -499,6 +524,7 @@ function buildTabReceipt(tabData, companyName, options = {}) {
 
     (order?.items || []).forEach((item, idx) => {
       doc.pushAll(formatItemBlock(item, idx, receiptWidth));
+      tabItemsSubtotal += calculateItemUnitTotal(item) * Math.max(1, Number(item?.quantity) || 1);
     });
 
     if (order?.observation) {
@@ -506,16 +532,22 @@ function buildTabReceipt(tabData, companyName, options = {}) {
       doc.push('');
     }
 
-    doc.push(`Total pedido: ${formatMoneyBR(order?.total || 0)}`);
-    doc.push('');
+    if (includePayment) {
+      doc.push(`Total pedido: ${formatMoneyBR(order?.total || 0)}`);
+      doc.push('');
+    }
   });
 
-  if (tabData?.couvert_fee) {
-    doc.push(`Couvert (${tabData?.people_count || 1}x): ${formatMoneyBR(tabData.couvert_fee)}`);
-  }
+  if (includePayment) {
+    if (tabData?.couvert_fee) {
+      doc.push(`Couvert (${tabData?.people_count || 1}x): ${formatMoneyBR(tabData.couvert_fee)}`);
+    }
 
-  doc.push(formatSection('Total Comanda', receiptWidth), 'bold');
-  doc.push(`TOTAL: ${formatMoneyBR(tabData?.total || 0)}`, 'total');
+    doc.push(formatSection('Total Comanda', receiptWidth), 'bold');
+    doc.push(`TOTAL: ${formatMoneyBR(tabData?.total || 0)}`, 'total');
+  } else if (tabItemsSubtotal > 0) {
+    doc.push(`Subtotal desta via: ${formatMoneyBR(tabItemsSubtotal)}`);
+  }
   doc.push('');
   doc.push('Nao e valido como documento fiscal.');
   doc.push('Solicite o documento fiscal ao estabelecimento.');
