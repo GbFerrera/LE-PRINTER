@@ -534,6 +534,8 @@ async function activateScaleCardByCode(code) {
     scaleCardActivating = true;
     const isActiveCard = Boolean(card?.active);
     const cardLabel = String(cardCode).padStart(3, '0');
+    const productName =
+        scaleWeighableProducts.find((item) => item.id === scaleSelectedProductId)?.name || '';
     if (scaleCardHint) {
         scaleCardHint.textContent = isActiveCard
             ? `Vinculando produto ao cartão ${cardLabel}...`
@@ -550,20 +552,35 @@ async function activateScaleCardByCode(code) {
             productId: scaleSelectedProductId || undefined,
         });
         if (result?.success) {
-            showStatus(result.message || 'Cartão ativado', 'success');
+            const linkedProduct =
+                Boolean(result.appended) ||
+                isActiveCard ||
+                Boolean(scaleSelectedProductId);
+            const successMessage = linkedProduct
+                ? productName
+                    ? `Produto "${productName}" adicionado ao cartão ${cardLabel} com sucesso`
+                    : `Produto adicionado ao cartão ${cardLabel} com sucesso`
+                : result.message || `Cartão ${cardLabel} ativado com sucesso`;
+
+            showToast(successMessage, 'success');
+            showStatus(successMessage, 'success');
             clearScaleCardSelection();
             hideScaleCardResults();
             await loadScaleTabCards('');
         } else {
-            showStatus(result?.message || 'Falha ao ativar cartão', 'error');
+            const errorMessage = result?.message || 'Falha ao ativar cartão';
+            showToast(errorMessage, 'error');
+            showStatus(errorMessage, 'error');
             if (scaleCardHint) {
-                scaleCardHint.textContent = `Cartão ${String(cardCode).padStart(3, '0')} selecionado. Corrija e tente de novo.`;
+                scaleCardHint.textContent = `Cartão ${cardLabel} selecionado. Corrija e tente de novo.`;
             }
         }
     } catch (error) {
-        showStatus(error?.message || 'Falha ao ativar cartão', 'error');
+        const errorMessage = error?.message || 'Falha ao ativar cartão';
+        showToast(errorMessage, 'error');
+        showStatus(errorMessage, 'error');
         if (scaleCardHint) {
-            scaleCardHint.textContent = `Cartão ${String(cardCode).padStart(3, '0')} selecionado. Corrija e tente de novo.`;
+            scaleCardHint.textContent = `Cartão ${cardLabel} selecionado. Corrija e tente de novo.`;
         }
     } finally {
         scaleCardActivating = false;
@@ -1680,6 +1697,29 @@ function showStatus(message, type) {
             }
         }, 5000);
     }
+}
+
+let appToastTimer = null;
+
+function showToast(message, type = 'success', durationMs = 4200) {
+    const toast = document.getElementById('app-toast');
+    if (!toast || !message) return;
+
+    toast.hidden = false;
+    toast.textContent = message;
+    toast.className = `app-toast ${type} is-visible`;
+
+    if (appToastTimer) clearTimeout(appToastTimer);
+    appToastTimer = setTimeout(() => {
+        toast.classList.remove('is-visible');
+        setTimeout(() => {
+            if (!toast.classList.contains('is-visible')) {
+                toast.hidden = true;
+                toast.textContent = '';
+                toast.className = 'app-toast';
+            }
+        }, 220);
+    }, durationMs);
 }
 
 // Update last activity
