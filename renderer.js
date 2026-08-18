@@ -58,6 +58,8 @@ const scaleCardResults = document.getElementById('scale-card-results');
 const scaleCardRefreshBtn = document.getElementById('scale-card-refresh-btn');
 const scaleCardHint = document.getElementById('scale-card-hint');
 const scaleCardCombobox = document.getElementById('scale-card-combobox');
+const scaleProductSelect = document.getElementById('scale-product-select');
+const scaleProductHint = document.getElementById('scale-product-hint');
 let lastScaleReading = { kg: 0, pricePerKg: 0, total: 0, stable: false };
 let lastScalePortPath = '';
 let scaleTabCards = [];
@@ -65,6 +67,10 @@ let scaleSelectedCardCode = null;
 let scaleCardsLoading = false;
 let scaleCardsSearchTimer = null;
 let scaleCardActivating = false;
+let scaleWeighableProducts = [];
+let scaleSelectedProductId = '';
+let scaleProductsLoading = false;
+let scaleWeighingLoadToken = 0;
 let pendingUpdateVersion = null;
 let headerUpdatePhase = 'idle'; // idle | available | downloading | ready
 
@@ -261,11 +267,68 @@ function formatScaleMoney(value) {
     return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
+function formatScaleCardActivatedAt(value) {
+    if (!value) return null;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
+
+function getScaleCardByCode(code) {
+    const cardCode = Number(code);
+    if (!Number.isInteger(cardCode) || cardCode < 1) return null;
+    return scaleTabCards.find((card) => card.code === cardCode) || null;
+}
+
+function getSelectedScaleCard() {
+    const code = getSelectedScaleCardCode();
+    return code != null ? getScaleCardByCode(code) : null;
+}
+
+function getScaleCardOptionMeta(card) {
+    if (!card?.active) return card?.label ? `<span>${card.label}</span>` : '';
+    const since = formatScaleCardActivatedAt(card.activated_at);
+    const parts = [];
+    if (since) parts.push(`Ativo desde ${since}`);
+    if (card.scale_product_name) parts.push(`Produto atual: ${card.scale_product_name}`);
+    return `<span class="scale-card-option-meta">${parts.join(' · ')}</span>`;
+}
+
+function getScaleCardSelectionHint(card) {
+    if (!card) return 'Digite para buscar, clique para selecionar e depois confirme.';
+    const productName = scaleWeighableProducts.find((item) => item.id === scaleSelectedProductId)?.name;
+    if (card.active) {
+        const since = formatScaleCardActivatedAt(card.activated_at);
+        let message = `Cartão ${card.codeLabel} já está ativo`;
+        if (since) message += ` desde ${since}`;
+        message += '. Você vai vincular';
+        message += productName ? ` "${productName}"` : ' este produto';
+        message += ' a este cartão.';
+        return message;
+    }
+    return `Cartão ${card.codeLabel} selecionado. Clique em Ativar cartão.`;
+}
+
+function updateScaleCardActiveNotice(card) {
+    const notice = document.getElementById('scale-card-active-notice');
+    if (!notice) return;
+    if (!card?.active) {
+        notice.hidden = true;
+        notice.textContent = '';
+        return;
+    }
+    notice.hidden = false;
+    notice.textContent = getScaleCardSelectionHint(card);
+}
+
 function updateScaleActionButtons() {
     const hasWeight = lastScaleReading.kg > 0;
     const code = getSelectedScaleCardCode();
     const hasValidCode = Number.isInteger(code) && code > 0;
-    const canActivate = hasWeight && lastScaleReading.stable && hasValidCode && isPaired;
+    const selectedCard = hasValidCode ? getScaleCardByCode(code) : null;
+    const needsProduct = scaleWeighableProducts.length > 0;
+    const hasProduct = !needsProduct || Boolean(scaleSelectedProductId);
+    const canActivate = hasWeight && lastScaleReading.stable && hasValidCode && hasProduct && isPaired;
 
     if (scalePrintBtn) {
         scalePrintBtn.disabled = !hasWeight;
@@ -273,7 +336,9 @@ function updateScaleActionButtons() {
     if (scaleActivateCardBtn) {
         scaleActivateCardBtn.hidden = !hasValidCode;
         scaleActivateCardBtn.disabled = !canActivate || scaleCardActivating;
+        scaleActivateCardBtn.textContent = selectedCard?.active ? 'Vincular produto' : 'Ativar cartão';
     }
+    updateScaleCardActiveNotice(selectedCard);
 }
 
 function getSelectedScaleCardCode() {
@@ -305,11 +370,15 @@ function selectScaleCard(card) {
     if (scaleCardCodeInput) {
         scaleCardCodeInput.value = card.codeLabel;
         scaleCardCodeInput.classList.add('is-selected');
+        scaleCardCodeInput.classList.toggle('is-active-card', Boolean(card.active));
     }
     if (scaleCardResults) {
         scaleCardResults.querySelectorAll('.scale-card-option').forEach((el) => {
             el.classList.toggle('is-selected', el.dataset.code === String(card.code));
         });
+    }
+    if (scaleCardHint) {
+        scaleCardHint.textContent = getScaleCardSelectionHint(card);
     }
     updateScaleActionButtons();
 }
@@ -319,8 +388,29 @@ function clearScaleCardSelection() {
     if (scaleCardCodeInput) {
         scaleCardCodeInput.value = '';
         scaleCardCodeInput.classList.remove('is-selected');
+        scaleCardCodeInput.classList.remove('is-active-card');
     }
+    updateScaleCardActiveNotice(null);
     updateScaleActionButtons();
+}
+
+function setScaleWeighingBusy(busy) {
+    if (scaleProductSelect) scaleProductSelect.disabled = busy || scaleProductsLoading;
+    if (scaleCardCodeInput) scaleCardCodeInput.disabled = busy || scaleCardsLoading;
+    if (scaleCardRefreshBtn) {
+        scaleCardRefreshBtn.disabled = busy;
+        scaleCardRefreshBtn.classList.toggle('is-busy', busy);
+    }
+}
+
+function renderScaleCardLoadingState(message = 'Buscando cartões...') {
+    if (!scaleCardResults) return;
+    scaleCardResults.innerHTML = '';
+    const loadingOpt = document.createElement('div');
+    loadingOpt.className = 'scale-card-option is-loading';
+    loadingOpt.innerHTML = `<span class="scale-spinner"></span><span>${message}</span>`;
+    scaleCardResults.appendChild(loadingOpt);
+    scaleCardResults.hidden = false;
 }
 
 function renderScaleCardResults(query, { open = false } = {}) {
@@ -328,6 +418,11 @@ function renderScaleCardResults(query, { open = false } = {}) {
 
     const q = String(query || '').trim();
     scaleCardResults.innerHTML = '';
+
+    if (scaleCardsLoading && q && open) {
+        renderScaleCardLoadingState('Buscando cartões...');
+        return;
+    }
 
     if (!q || !open) {
         hideScaleCardResults();
@@ -340,11 +435,17 @@ function renderScaleCardResults(query, { open = false } = {}) {
     const filtered = filterScaleTabCards(q);
 
     if (!scaleTabCards.length) {
-        hideScaleCardResults();
+        if (q && open) {
+            scaleCardResults.hidden = false;
+            const emptyOpt = document.createElement('div');
+            emptyOpt.className = 'scale-card-option is-empty';
+            emptyOpt.textContent = 'Nenhum cartão disponível';
+            scaleCardResults.appendChild(emptyOpt);
+        } else {
+            hideScaleCardResults();
+        }
         if (scaleCardHint) {
-            scaleCardHint.textContent = scaleCardsLoading
-                ? 'Carregando cartões...'
-                : 'Nenhum cartão livre no momento.';
+            scaleCardHint.textContent = 'Nenhum cartão cadastrado.';
         }
         return;
     }
@@ -356,7 +457,7 @@ function renderScaleCardResults(query, { open = false } = {}) {
         emptyOpt.textContent = 'Nenhum cartão encontrado';
         scaleCardResults.appendChild(emptyOpt);
         if (scaleCardHint) {
-            scaleCardHint.textContent = 'Cartão não encontrado ou já em uso.';
+            scaleCardHint.textContent = 'Nenhum cartão encontrado.';
         }
         return;
     }
@@ -365,9 +466,10 @@ function renderScaleCardResults(query, { open = false } = {}) {
         const opt = document.createElement('button');
         opt.type = 'button';
         opt.className = 'scale-card-option';
+        if (card.active) opt.classList.add('is-active-card');
         opt.setAttribute('role', 'option');
         opt.dataset.code = String(card.code);
-        opt.innerHTML = `<strong>${card.codeLabel}</strong>${card.label ? `<span>${card.label}</span>` : ''}`;
+        opt.innerHTML = `<strong>${card.codeLabel}</strong>${getScaleCardOptionMeta(card)}`;
         if (Number(scaleSelectedCardCode) === card.code) {
             opt.classList.add('is-selected');
         }
@@ -375,9 +477,6 @@ function renderScaleCardResults(query, { open = false } = {}) {
             e.preventDefault();
             selectScaleCard(card);
             hideScaleCardResults();
-            if (scaleCardHint) {
-                scaleCardHint.textContent = `Cartão ${card.codeLabel} selecionado. Clique em Ativar cartão.`;
-            }
             scaleCardCodeInput?.focus();
         });
         scaleCardResults.appendChild(opt);
@@ -420,6 +519,12 @@ async function activateScaleCardByCode(code) {
         return;
     }
 
+    if (scaleWeighableProducts.length > 0 && !scaleSelectedProductId) {
+        showStatus('Selecione o produto pesado', 'error');
+        updateScaleActionButtons();
+        return;
+    }
+
     const priceFromInput = Number(String(scalePriceInput?.value || '0').replace(',', '.'));
     const pricePerKg = Number.isFinite(priceFromInput) && priceFromInput >= 0
         ? priceFromInput
@@ -427,7 +532,13 @@ async function activateScaleCardByCode(code) {
     const total = kg * (Number.isFinite(pricePerKg) ? pricePerKg : 0);
 
     scaleCardActivating = true;
-    if (scaleCardHint) scaleCardHint.textContent = `Ativando cartão ${String(cardCode).padStart(3, '0')}...`;
+    const isActiveCard = Boolean(card?.active);
+    const cardLabel = String(cardCode).padStart(3, '0');
+    if (scaleCardHint) {
+        scaleCardHint.textContent = isActiveCard
+            ? `Vinculando produto ao cartão ${cardLabel}...`
+            : `Ativando cartão ${cardLabel}...`;
+    }
 
     try {
         const result = await window.electronAPI.scaleActivateCard({
@@ -436,6 +547,7 @@ async function activateScaleCardByCode(code) {
             pricePerKg,
             total,
             stable: lastScaleReading.stable,
+            productId: scaleSelectedProductId || undefined,
         });
         if (result?.success) {
             showStatus(result.message || 'Cartão ativado', 'success');
@@ -463,35 +575,42 @@ async function activateScaleCardByCode(code) {
     }
 }
 
-async function loadScaleTabCards(query = '') {
+async function loadScaleTabCards(query = '', options = {}) {
     if (!window.electronAPI.scaleListTabCards) return;
+    const silent = Boolean(options.silent);
     scaleCardsLoading = true;
-    if (scaleCardRefreshBtn) scaleCardRefreshBtn.disabled = true;
+    if (!silent && scaleCardRefreshBtn) scaleCardRefreshBtn.disabled = true;
     if (scaleCardHint) scaleCardHint.textContent = 'Carregando cartões...';
+    const q = String(scaleCardCodeInput?.value || query || '').trim();
+    if (q) renderScaleCardResults(q, { open: true });
 
+    let result = null;
     try {
-        const result = await window.electronAPI.scaleListTabCards({ q: query });
+        result = await window.electronAPI.scaleListTabCards({ q: query });
         scaleTabCards = Array.isArray(result?.cards) ? result.cards : [];
-
-        renderScaleCardResults(scaleCardCodeInput?.value || query, {
-            open: Boolean(String(scaleCardCodeInput?.value || query).trim()) &&
-                document.activeElement === scaleCardCodeInput,
-        });
-
-        if (!result?.success && result?.message) {
-            if (scaleCardHint) {
-                scaleCardHint.textContent = 'Não foi possível carregar os cartões.';
-            }
-        }
     } catch (error) {
         scaleTabCards = [];
-        renderScaleCardResults('', { open: false });
         if (scaleCardHint) {
             scaleCardHint.textContent = 'Não foi possível carregar os cartões.';
         }
     } finally {
         scaleCardsLoading = false;
-        if (scaleCardRefreshBtn) scaleCardRefreshBtn.disabled = false;
+        if (!silent && scaleCardRefreshBtn && !scaleProductsLoading) {
+            scaleCardRefreshBtn.disabled = false;
+        }
+
+        const currentQuery = String(scaleCardCodeInput?.value || query || '').trim();
+        if (currentQuery) {
+            renderScaleCardResults(currentQuery, { open: true });
+        } else {
+            renderScaleCardResults('', { open: false });
+            if (scaleCardHint && !scaleCardActivating) {
+                scaleCardHint.textContent = result?.success === false && result?.message
+                    ? 'Não foi possível carregar os cartões.'
+                    : 'Digite para buscar, clique para selecionar e depois ative.';
+            }
+        }
+
         updateScaleActionButtons();
     }
 }
@@ -506,11 +625,65 @@ function scheduleScaleCardSearch() {
         return;
     }
 
-    renderScaleCardResults(q, { open: true });
+    renderScaleCardLoadingState('Buscando cartões...');
     if (scaleCardsSearchTimer) clearTimeout(scaleCardsSearchTimer);
     scaleCardsSearchTimer = setTimeout(() => {
         loadScaleTabCards(q);
     }, 280);
+}
+
+async function loadWeighableProducts(options = {}) {
+    if (!window.electronAPI.scaleListWeighableProducts) return;
+    const silent = Boolean(options.silent);
+    scaleProductsLoading = true;
+    if (!silent) setScaleWeighingBusy(true);
+    if (scaleProductSelect) {
+        scaleProductSelect.disabled = true;
+        scaleProductSelect.innerHTML = '<option value="">Carregando produtos...</option>';
+    }
+    if (scaleProductHint) scaleProductHint.textContent = 'Buscando produtos pesáveis...';
+
+    try {
+        const result = await window.electronAPI.scaleListWeighableProducts();
+        scaleWeighableProducts = Array.isArray(result?.products) ? result.products : [];
+        renderWeighableProducts();
+        if (!result?.success && result?.message && scaleProductHint) {
+            scaleProductHint.textContent = 'Não foi possível carregar os produtos.';
+        }
+    } catch (error) {
+        scaleWeighableProducts = [];
+        renderWeighableProducts();
+        if (scaleProductHint) {
+            scaleProductHint.textContent = 'Não foi possível carregar os produtos.';
+        }
+    } finally {
+        scaleProductsLoading = false;
+        if (!silent) {
+            if (scaleProductSelect) scaleProductSelect.disabled = false;
+            setScaleWeighingBusy(false);
+        }
+        updateScaleActionButtons();
+    }
+}
+
+async function loadScaleWeighingData(query = '') {
+    const token = ++scaleWeighingLoadToken;
+    setScaleWeighingBusy(true);
+    if (scaleProductHint) scaleProductHint.textContent = 'Buscando produtos pesáveis...';
+    if (scaleCardHint) scaleCardHint.textContent = 'Buscando cartões...';
+
+    try {
+        await Promise.all([
+            loadWeighableProducts({ silent: true }),
+            loadScaleTabCards(query, { silent: true }),
+        ]);
+    } finally {
+        if (token === scaleWeighingLoadToken) {
+            if (scaleProductSelect) scaleProductSelect.disabled = false;
+            if (scaleCardCodeInput) scaleCardCodeInput.disabled = false;
+            setScaleWeighingBusy(false);
+        }
+    }
 }
 
 function applyScalePricing(data) {
@@ -655,9 +828,56 @@ async function loadScalePanel() {
         if (status?.portPath) lastScalePortPath = status.portPath;
         await loadScalePorts(lastScalePortPath);
         applyScaleStatus(status);
-        await loadScaleTabCards('');
+        await loadScaleWeighingData('');
     } catch (error) {
         console.error('Error loading scale panel:', error);
+    }
+}
+
+function applySelectedWeighableProduct(productId) {
+    scaleSelectedProductId = String(productId || '');
+    const product = scaleWeighableProducts.find((item) => item.id === scaleSelectedProductId);
+    if (!product) return;
+
+    const pricePerKg = Number(product.price_per_kg);
+    if (!Number.isFinite(pricePerKg) || pricePerKg < 0) return;
+
+    lastScaleReading.pricePerKg = pricePerKg;
+    if (scalePriceInput) scalePriceInput.value = String(pricePerKg);
+    if (scalePriceDisplay) scalePriceDisplay.textContent = formatScaleMoney(pricePerKg);
+    if (window.electronAPI.scaleSetPrice) {
+        void window.electronAPI.scaleSetPrice(pricePerKg);
+    }
+    applyScalePricing({
+        kg: lastScaleReading.kg,
+        pricePerKg,
+        total: lastScaleReading.kg * pricePerKg,
+    });
+}
+
+function renderWeighableProducts() {
+    if (!scaleProductSelect) return;
+    const previous = scaleSelectedProductId;
+    scaleProductSelect.innerHTML = '<option value="">Selecione o produto...</option>';
+    scaleWeighableProducts.forEach((product) => {
+        const opt = document.createElement('option');
+        opt.value = product.id;
+        opt.textContent = `${product.name} — ${formatScaleMoney(product.price_per_kg)}/kg`;
+        scaleProductSelect.appendChild(opt);
+    });
+
+    if (previous && scaleWeighableProducts.some((item) => item.id === previous)) {
+        scaleProductSelect.value = previous;
+        applySelectedWeighableProduct(previous);
+    } else if (scaleWeighableProducts.length > 0) {
+        scaleProductSelect.value = scaleWeighableProducts[0].id;
+        applySelectedWeighableProduct(scaleWeighableProducts[0].id);
+    }
+
+    if (scaleProductHint) {
+        scaleProductHint.textContent = scaleWeighableProducts.length
+            ? 'Selecione o produto que está sendo pesado.'
+            : 'Cadastre produtos pesáveis no cardápio da empresa.';
     }
 }
 
@@ -686,7 +906,7 @@ function setupAppTabs() {
             });
             if (name === 'scale') {
                 loadScalePorts(scalePortSelect?.value || lastScalePortPath);
-                loadScaleTabCards(scaleCardCodeInput?.value || '');
+                loadScaleWeighingData(scaleCardCodeInput?.value || '');
             }
         });
     });
@@ -814,9 +1034,15 @@ function setupScaleListeners() {
                 const exact = scaleTabCards.find((c) => c.code === asNumber);
                 scaleSelectedCardCode = exact ? exact.code : null;
                 scaleCardCodeInput.classList.toggle('is-selected', Boolean(exact));
+                scaleCardCodeInput.classList.toggle('is-active-card', Boolean(exact?.active));
+                if (exact && scaleCardHint) {
+                    scaleCardHint.textContent = getScaleCardSelectionHint(exact);
+                }
             } else {
                 scaleSelectedCardCode = null;
                 scaleCardCodeInput.classList.remove('is-selected');
+                scaleCardCodeInput.classList.remove('is-active-card');
+                updateScaleCardActiveNotice(null);
             }
             scheduleScaleCardSearch();
             updateScaleActionButtons();
@@ -844,7 +1070,7 @@ function setupScaleListeners() {
 
     if (scaleCardRefreshBtn) {
         scaleCardRefreshBtn.addEventListener('click', () => {
-            loadScaleTabCards(scaleCardCodeInput?.value || '');
+            loadScaleWeighingData(scaleCardCodeInput?.value || '');
         });
     }
 
@@ -861,6 +1087,17 @@ function setupScaleListeners() {
             } finally {
                 updateScaleActionButtons();
             }
+        });
+    }
+
+    if (scaleProductSelect) {
+        scaleProductSelect.addEventListener('change', () => {
+            applySelectedWeighableProduct(scaleProductSelect.value);
+            const selectedCard = getSelectedScaleCard();
+            if (selectedCard && scaleCardHint) {
+                scaleCardHint.textContent = getScaleCardSelectionHint(selectedCard);
+            }
+            updateScaleActionButtons();
         });
     }
 }

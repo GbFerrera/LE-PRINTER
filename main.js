@@ -964,6 +964,7 @@ ipcMain.handle('scale-activate-card', async (_event, payload = {}) => {
         price_per_kg: Number.isFinite(pricePerKg) ? pricePerKg : 0,
         total: Number.isFinite(total) ? total : kg * (Number.isFinite(pricePerKg) ? pricePerKg : 0),
         stable: true,
+        product_id: payload?.productId || payload?.product_id || undefined,
       }),
     });
 
@@ -974,7 +975,8 @@ ipcMain.handle('scale-activate-card', async (_event, payload = {}) => {
 
     return {
       success: true,
-      message: `Cartão ${String(code).padStart(3, '0')} ativado`,
+      message: data?.message || `Cartão ${String(code).padStart(3, '0')} ativado`,
+      appended: Boolean(data?.appended),
       card: data.card,
       tab: data.tab,
     };
@@ -1042,6 +1044,10 @@ function normalizeTabCard(raw) {
     raw.table_name ||
     null;
 
+  const activatedAt = raw.activated_at || raw.activatedAt || null;
+  const scaleProductName =
+    raw.scale_product_name || raw.scaleProductName || raw.current_product_name || null;
+
   return {
     id: raw.id || null,
     code,
@@ -1049,6 +1055,8 @@ function normalizeTabCard(raw) {
     active: Boolean(active),
     status: statusRaw || (active ? 'active' : 'available'),
     label: label ? String(label) : null,
+    activated_at: activatedAt,
+    scale_product_name: scaleProductName ? String(scaleProductName) : null,
   };
 }
 
@@ -1072,7 +1080,6 @@ ipcMain.handle('scale-list-tab-cards', async (_event, payload = {}) => {
   const query = String(payload?.q || '').trim();
   const params = new URLSearchParams();
   if (query) params.set('q', query);
-  params.set('available', '1');
 
   try {
     const response = await fetch(`${BACKEND_URL}/printer/tab-cards?${params.toString()}`, {
@@ -1093,8 +1100,7 @@ ipcMain.handle('scale-list-tab-cards', async (_event, payload = {}) => {
 
     const cards = extractTabCardsPayload(data)
       .map(normalizeTabCard)
-      .filter(Boolean)
-      .filter((card) => !card.active);
+      .filter(Boolean);
 
     cards.sort((a, b) => a.code - b.code);
     return {
@@ -1107,6 +1113,55 @@ ipcMain.handle('scale-list-tab-cards', async (_event, payload = {}) => {
       success: false,
       message: 'Não foi possível carregar os cartões',
       cards: [],
+    };
+  }
+});
+
+ipcMain.handle('scale-list-weighable-products', async () => {
+  const token = store.get('deviceToken', null) || deviceToken;
+  if (!token) {
+    return { success: false, message: 'Impressora não vinculada à empresa', products: [] };
+  }
+
+  try {
+    const response = await fetch(`${BACKEND_URL}/printer/weighable-products`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return {
+        success: false,
+        message: data?.message || 'Não foi possível carregar os produtos',
+        products: [],
+      };
+    }
+
+    const rawProducts = Array.isArray(data?.products) ? data.products : [];
+    const products = rawProducts
+      .map((product) => {
+        if (!product || typeof product !== 'object') return null;
+        const id = String(product.id || '').trim();
+        const name = String(product.name || '').trim();
+        const pricePerKg = Number(product.price_per_kg ?? product.pricePerKg);
+        if (!id || !name || !Number.isFinite(pricePerKg) || pricePerKg < 0) return null;
+        return { id, name, price_per_kg: pricePerKg };
+      })
+      .filter(Boolean);
+
+    return {
+      success: true,
+      products,
+      message: products.length ? null : 'Nenhum produto pesável cadastrado',
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: 'Não foi possível carregar os produtos',
+      products: [],
     };
   }
 });

@@ -212,6 +212,13 @@
                                 </div>
 
                                 <div class="scale-stage-card scale-actions-panel">
+                                    <div class="scale-product-select-block">
+                                        <div class="scale-stage-label">Produto pesado</div>
+                                        <select id="scale-product-select" class="scale-product-select" disabled>
+                                            <option value="">Carregando produtos...</option>
+                                        </select>
+                                        <small id="scale-product-hint" class="scale-hint">Cadastre produtos pesáveis no cardápio.</small>
+                                    </div>
                                     <div class="scale-card-activation">
                                         <div class="scale-stage-label">Cartão</div>
                                         <div class="scale-card-combobox" id="scale-card-combobox">
@@ -224,15 +231,17 @@
                                                     placeholder="Digite o número..."
                                                     aria-autocomplete="list"
                                                     aria-controls="scale-card-results"
+                                                    disabled
                                                 >
-                                                <button id="scale-card-refresh-btn" class="btn-secondary" type="button" title="Buscar novamente">↻</button>
+                                                <button id="scale-card-refresh-btn" class="btn-secondary scale-refresh-loading" type="button" title="Atualizar produtos e cartões">↻</button>
                                             </div>
                                             <div id="scale-card-results" class="scale-card-results" role="listbox" hidden></div>
                                         </div>
                                         <button id="scale-activate-card-btn" class="btn-primary scale-activate-btn" type="button" hidden disabled>
                                             Ativar cartão
                                         </button>
-                                        <small id="scale-card-hint" class="scale-hint">Digite para buscar, clique para selecionar e depois ative.</small>
+                                        <div id="scale-card-active-notice" class="scale-card-active-notice" hidden></div>
+                                        <small id="scale-card-hint" class="scale-hint">Digite para buscar, clique para selecionar e depois confirme.</small>
                                     </div>
 
                                     <div class="scale-print-block">

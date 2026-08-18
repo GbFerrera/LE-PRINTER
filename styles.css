@@ -1100,6 +1100,26 @@ input:checked + .slider:before {
     padding-bottom: 18px;
 }
 
+.scale-product-select-block {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-bottom: 14px;
+    margin-bottom: 6px;
+    border-bottom: 1px dashed #cbd5e1;
+}
+
+.scale-product-select {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid #cbd5e1;
+    border-radius: 12px;
+    font-size: 15px;
+    font-weight: 600;
+    background: #fff;
+    color: #0f172a;
+}
+
 .scale-card-combobox {
     position: relative;
     display: flex;
@@ -1187,9 +1207,42 @@ input:checked + .slider:before {
     color: #fb6900;
 }
 
+.scale-card-option.is-active-card {
+    background: #fff7ed;
+}
+
+.scale-card-option.is-active-card strong {
+    color: #c2410c;
+}
+
+.scale-card-option-meta {
+    display: block;
+    font-size: 12px;
+    line-height: 1.35;
+    color: #b45309;
+    text-align: right;
+    max-width: 70%;
+}
+
 .scale-card-search-row input.is-selected {
     border-color: #fb6900;
     background: #fffaf5;
+}
+
+.scale-card-search-row input.is-active-card {
+    border-color: #fb923c;
+    background: #fff7ed;
+}
+
+.scale-card-active-notice {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid #fdba74;
+    background: #fff7ed;
+    color: #9a3412;
+    font-size: 13px;
+    line-height: 1.45;
 }
 
 .scale-card-option.is-empty {
@@ -1200,6 +1253,52 @@ input:checked + .slider:before {
 
 .scale-card-option.is-empty:hover {
     background: transparent;
+}
+
+.scale-card-option.is-loading {
+    cursor: default;
+    color: #64748b;
+    justify-content: center;
+    gap: 8px;
+}
+
+.scale-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid #fdba74;
+    border-top-color: #fb6900;
+    border-radius: 50%;
+    animation: scale-spin 0.7s linear infinite;
+    flex-shrink: 0;
+}
+
+@keyframes scale-spin {
+    to { transform: rotate(360deg); }
+}
+
+.scale-refresh-loading.is-busy {
+    pointer-events: none;
+    opacity: 0.65;
+}
+
+.scale-refresh-loading.is-busy::after {
+    content: '';
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    margin-left: 4px;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: scale-spin 0.7s linear infinite;
+    vertical-align: middle;
+}
+
+.scale-product-select:disabled,
+.scale-card-search-row input:disabled {
+    opacity: 0.72;
+    cursor: wait;
 }
 
 .scale-print-block {

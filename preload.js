@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   printScaleTicket: (payload) => ipcRenderer.invoke('print-scale-ticket', payload),
   scaleActivateCard: (payload) => ipcRenderer.invoke('scale-activate-card', payload),
   scaleListTabCards: (payload) => ipcRenderer.invoke('scale-list-tab-cards', payload),
+  scaleListWeighableProducts: () => ipcRenderer.invoke('scale-list-weighable-products'),
 
   // Printing
   printOrder: (order) => ipcRenderer.invoke('print-order', order),
