@@ -54,8 +54,17 @@ const scaleTotalDisplay = document.getElementById('scale-total-display');
 const scalePrintBtn = document.getElementById('scale-print-btn');
 const scaleCardCodeInput = document.getElementById('scale-card-code-input');
 const scaleActivateCardBtn = document.getElementById('scale-activate-card-btn');
+const scaleCardResults = document.getElementById('scale-card-results');
+const scaleCardEmpty = document.getElementById('scale-card-empty');
+const scaleCardRefreshBtn = document.getElementById('scale-card-refresh-btn');
+const scaleCardHint = document.getElementById('scale-card-hint');
+const scaleCardCombobox = document.getElementById('scale-card-combobox');
 let lastScaleReading = { kg: 0, pricePerKg: 0, total: 0, stable: false };
 let lastScalePortPath = '';
+let scaleTabCards = [];
+let scaleSelectedCardCode = null;
+let scaleCardsLoading = false;
+let scaleCardsSearchTimer = null;
 let pendingUpdateVersion = null;
 let headerUpdatePhase = 'idle'; // idle | available | downloading | ready
 
@@ -254,8 +263,10 @@ function formatScaleMoney(value) {
 
 function updateScaleActionButtons() {
     const hasWeight = lastScaleReading.kg > 0;
-    const cardCode = String(scaleCardCodeInput?.value || '').trim();
-    const canActivate = hasWeight && lastScaleReading.stable && cardCode.length > 0 && isPaired;
+    const typed = String(scaleCardCodeInput?.value || '').trim();
+    const code = Number(scaleSelectedCardCode || typed);
+    const hasValidCode = Number.isInteger(code) && code > 0;
+    const canActivate = hasWeight && lastScaleReading.stable && hasValidCode && isPaired;
 
     if (scalePrintBtn) {
         scalePrintBtn.disabled = !hasWeight;
@@ -263,6 +274,141 @@ function updateScaleActionButtons() {
     if (scaleActivateCardBtn) {
         scaleActivateCardBtn.disabled = !canActivate;
     }
+}
+
+function getSelectedScaleCardCode() {
+    const typed = String(scaleCardCodeInput?.value || '').trim();
+    const code = Number(scaleSelectedCardCode || typed);
+    return Number.isInteger(code) && code > 0 ? code : null;
+}
+
+function filterScaleTabCards(query) {
+    const q = String(query || '').trim().toLowerCase();
+    if (!q) return scaleTabCards.slice(0, 30);
+    return scaleTabCards
+        .filter((card) => {
+            const codeMatch = String(card.code).includes(q) || String(card.codeLabel).includes(q);
+            const labelMatch = card.label ? String(card.label).toLowerCase().includes(q) : false;
+            return codeMatch || labelMatch;
+        })
+        .slice(0, 30);
+}
+
+function renderScaleCardResults(query, { open = true } = {}) {
+    if (!scaleCardResults || !scaleCardEmpty) return;
+
+    const filtered = filterScaleTabCards(query);
+    scaleCardResults.innerHTML = '';
+
+    if (!scaleTabCards.length) {
+        scaleCardEmpty.hidden = false;
+        scaleCardEmpty.textContent = 'Nenhuma comanda cadastrada';
+        scaleCardResults.hidden = true;
+        if (scaleCardHint) {
+            scaleCardHint.textContent = scaleCardsLoading
+                ? 'Buscando comandas...'
+                : 'Nenhuma comanda disponível. Clique em ↻ para buscar novamente.';
+        }
+        return;
+    }
+
+    scaleCardEmpty.hidden = true;
+
+    if (!filtered.length) {
+        scaleCardResults.hidden = !open;
+        if (open) {
+            const emptyOpt = document.createElement('div');
+            emptyOpt.className = 'scale-card-option is-empty';
+            emptyOpt.textContent = 'Nenhuma comanda encontrada';
+            scaleCardResults.appendChild(emptyOpt);
+        }
+        if (scaleCardHint) {
+            scaleCardHint.textContent = 'Nenhuma comanda com esse número. Ativas não aparecem na lista.';
+        }
+        return;
+    }
+
+    filtered.forEach((card) => {
+        const opt = document.createElement('button');
+        opt.type = 'button';
+        opt.className = 'scale-card-option';
+        opt.setAttribute('role', 'option');
+        opt.dataset.code = String(card.code);
+        opt.innerHTML = `<strong>${card.codeLabel}</strong>${card.label ? `<span>${card.label}</span>` : ''}`;
+        if (Number(scaleSelectedCardCode) === card.code) {
+            opt.classList.add('is-selected');
+        }
+        opt.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            selectScaleCard(card);
+        });
+        scaleCardResults.appendChild(opt);
+    });
+
+    scaleCardResults.hidden = !open;
+    if (scaleCardHint) {
+        scaleCardHint.textContent = 'Selecione uma comanda disponível. Ativas não aparecem.';
+    }
+}
+
+function selectScaleCard(card) {
+    if (!card) return;
+    scaleSelectedCardCode = card.code;
+    if (scaleCardCodeInput) {
+        scaleCardCodeInput.value = card.codeLabel;
+    }
+    if (scaleCardResults) scaleCardResults.hidden = true;
+    updateScaleActionButtons();
+}
+
+async function loadScaleTabCards(query = '') {
+    if (!window.electronAPI.scaleListTabCards) return;
+    scaleCardsLoading = true;
+    if (scaleCardRefreshBtn) scaleCardRefreshBtn.disabled = true;
+    if (scaleCardHint) scaleCardHint.textContent = 'Buscando comandas...';
+
+    try {
+        const result = await window.electronAPI.scaleListTabCards({ q: query });
+        scaleTabCards = Array.isArray(result?.cards) ? result.cards : [];
+
+        if (scaleSelectedCardCode != null) {
+            const stillAvailable = scaleTabCards.some((c) => c.code === Number(scaleSelectedCardCode));
+            if (!stillAvailable) {
+                scaleSelectedCardCode = null;
+            }
+        }
+
+        renderScaleCardResults(scaleCardCodeInput?.value || query, {
+            open: document.activeElement === scaleCardCodeInput,
+        });
+
+        if (!result?.success && result?.message) {
+            if (scaleCardHint) scaleCardHint.textContent = result.message;
+            if (!scaleTabCards.length && scaleCardEmpty) {
+                scaleCardEmpty.hidden = false;
+                scaleCardEmpty.textContent = 'Nenhuma comanda cadastrada';
+            }
+        }
+    } catch (error) {
+        scaleTabCards = [];
+        renderScaleCardResults('', { open: false });
+        if (scaleCardHint) {
+            scaleCardHint.textContent = error?.message || 'Falha ao buscar comandas';
+        }
+    } finally {
+        scaleCardsLoading = false;
+        if (scaleCardRefreshBtn) scaleCardRefreshBtn.disabled = false;
+        updateScaleActionButtons();
+    }
+}
+
+function scheduleScaleCardSearch() {
+    const q = String(scaleCardCodeInput?.value || '').trim();
+    renderScaleCardResults(q, { open: true });
+    if (scaleCardsSearchTimer) clearTimeout(scaleCardsSearchTimer);
+    scaleCardsSearchTimer = setTimeout(() => {
+        loadScaleTabCards(q);
+    }, 280);
 }
 
 function applyScalePricing(data) {
@@ -407,6 +553,7 @@ async function loadScalePanel() {
         if (status?.portPath) lastScalePortPath = status.portPath;
         await loadScalePorts(lastScalePortPath);
         applyScaleStatus(status);
+        await loadScaleTabCards('');
     } catch (error) {
         console.error('Error loading scale panel:', error);
     }
@@ -437,6 +584,7 @@ function setupAppTabs() {
             });
             if (name === 'scale') {
                 loadScalePorts(scalePortSelect?.value || lastScalePortPath);
+                loadScaleTabCards(scaleCardCodeInput?.value || '');
             }
         });
     });
@@ -550,21 +698,52 @@ function setupScaleListeners() {
     }
 
     if (scaleCardCodeInput) {
-        scaleCardCodeInput.addEventListener('input', updateScaleActionButtons);
+        scaleCardCodeInput.addEventListener('focus', () => {
+            renderScaleCardResults(scaleCardCodeInput.value, { open: true });
+            if (!scaleTabCards.length && !scaleCardsLoading) {
+                loadScaleTabCards(scaleCardCodeInput.value);
+            }
+        });
+        scaleCardCodeInput.addEventListener('input', () => {
+            scaleSelectedCardCode = null;
+            const typed = String(scaleCardCodeInput.value || '').trim();
+            const asNumber = Number(typed);
+            if (Number.isInteger(asNumber) && asNumber > 0) {
+                const exact = scaleTabCards.find((c) => c.code === asNumber);
+                if (exact) scaleSelectedCardCode = exact.code;
+            }
+            scheduleScaleCardSearch();
+            updateScaleActionButtons();
+        });
         scaleCardCodeInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                if (scaleCardResults) scaleCardResults.hidden = true;
+                return;
+            }
             if (e.key === 'Enter' && scaleActivateCardBtn && !scaleActivateCardBtn.disabled) {
                 e.preventDefault();
                 scaleActivateCardBtn.click();
             }
+        });
+        scaleCardCodeInput.addEventListener('blur', () => {
+            setTimeout(() => {
+                if (scaleCardResults) scaleCardResults.hidden = true;
+            }, 150);
+        });
+    }
+
+    if (scaleCardRefreshBtn) {
+        scaleCardRefreshBtn.addEventListener('click', () => {
+            loadScaleTabCards(scaleCardCodeInput?.value || '');
         });
     }
 
     if (scaleActivateCardBtn) {
         scaleActivateCardBtn.addEventListener('click', async () => {
             if (!window.electronAPI.scaleActivateCard) return;
-            const code = Number(String(scaleCardCodeInput?.value || '').trim());
-            if (!Number.isInteger(code) || code < 1) {
-                showStatus('Informe o número do cartão', 'error');
+            const code = getSelectedScaleCardCode();
+            if (!code) {
+                showStatus('Selecione ou informe o número da comanda', 'error');
                 return;
             }
 
@@ -587,6 +766,8 @@ function setupScaleListeners() {
                 if (result?.success) {
                     showStatus(result.message || 'Cartão ativado', 'success');
                     if (scaleCardCodeInput) scaleCardCodeInput.value = '';
+                    scaleSelectedCardCode = null;
+                    await loadScaleTabCards('');
                 } else {
                     showStatus(result?.message || 'Falha ao ativar cartão', 'error');
                 }

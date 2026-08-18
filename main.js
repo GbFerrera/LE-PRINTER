@@ -983,6 +983,135 @@ ipcMain.handle('scale-activate-card', async (_event, payload = {}) => {
   }
 });
 
+function normalizeTabCard(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const code = Number(
+    raw.code ?? raw.card_code ?? raw.number ?? raw.cardNumber ?? raw.nro ?? raw.nro_card
+  );
+  if (!Number.isInteger(code) || code < 1) return null;
+
+  const statusRaw = String(raw.status ?? raw.state ?? raw.situation ?? '').trim().toLowerCase();
+  const activeFlag =
+    raw.active === true ||
+    raw.is_active === true ||
+    raw.isActive === true ||
+    raw.in_use === true ||
+    raw.occupied === true;
+
+  const activeStatuses = new Set([
+    'active',
+    'ativado',
+    'ativa',
+    'opened',
+    'open',
+    'aberta',
+    'aberto',
+    'in_use',
+    'em_uso',
+    'busy',
+    'occupied',
+    'ocupado',
+    'ocupada',
+  ]);
+
+  const inactiveStatuses = new Set([
+    'inactive',
+    'inativo',
+    'inativa',
+    'available',
+    'disponivel',
+    'disponível',
+    'free',
+    'idle',
+    'closed',
+    'fechada',
+    'fechado',
+    'pending',
+    'pendente',
+    '',
+  ]);
+
+  let active = activeFlag || activeStatuses.has(statusRaw);
+  if (!activeFlag && inactiveStatuses.has(statusRaw)) active = false;
+
+  const label =
+    raw.name ||
+    raw.label ||
+    raw.title ||
+    raw.customer_name ||
+    raw.table_name ||
+    null;
+
+  return {
+    id: raw.id || null,
+    code,
+    codeLabel: String(code).padStart(3, '0'),
+    active: Boolean(active),
+    status: statusRaw || (active ? 'active' : 'available'),
+    label: label ? String(label) : null,
+  };
+}
+
+function extractTabCardsPayload(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.cards)) return data.cards;
+  if (Array.isArray(data?.tab_cards)) return data.tab_cards;
+  if (Array.isArray(data?.tabCards)) return data.tabCards;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.items)) return data.items;
+  if (Array.isArray(data?.results)) return data.results;
+  return [];
+}
+
+ipcMain.handle('scale-list-tab-cards', async (_event, payload = {}) => {
+  const token = store.get('deviceToken', null) || deviceToken;
+  if (!token) {
+    return { success: false, message: 'Impressora não vinculada à empresa', cards: [] };
+  }
+
+  const query = String(payload?.q || '').trim();
+  const params = new URLSearchParams();
+  if (query) params.set('q', query);
+  params.set('available', '1');
+  const qs = params.toString();
+
+  const endpoints = [
+    `${BACKEND_URL}/printer/tab-cards${qs ? `?${qs}` : ''}`,
+    `${BACKEND_URL}/printer/tab-cards/available${query ? `?q=${encodeURIComponent(query)}` : ''}`,
+  ];
+
+  let lastError = 'Falha ao buscar comandas';
+  for (const url of endpoints) {
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        lastError = data?.message || `Erro ${response.status}`;
+        if (response.status === 404) continue;
+        return { success: false, message: lastError, cards: [] };
+      }
+
+      const cards = extractTabCardsPayload(data)
+        .map(normalizeTabCard)
+        .filter(Boolean)
+        .filter((card) => !card.active);
+
+      cards.sort((a, b) => a.code - b.code);
+      return { success: true, cards, message: cards.length ? null : 'Nenhuma comanda cadastrada' };
+    } catch (error) {
+      lastError = error.message || 'Erro ao buscar comandas';
+    }
+  }
+
+  return { success: false, message: lastError, cards: [] };
+});
+
 ipcMain.handle('print-order', async (event, order) => {
   const result = await printOrder(order);
   return result;

@@ -188,39 +188,63 @@
                         </aside>
 
                         <section class="scale-stage">
-                            <div class="scale-stage-card">
-                                <div class="scale-stage-label">Peso atual</div>
-                                <div class="scale-weight-display" id="scale-weight-display">
-                                    <span class="scale-weight-value" id="scale-weight-value">0,000</span>
-                                    <span class="scale-weight-unit">kg</span>
-                                </div>
-                                <div class="scale-meta">
-                                    <span id="scale-stable-badge" class="scale-badge">—</span>
-                                    <span id="scale-mode-label" class="scale-mode-label">Parada</span>
-                                </div>
-                                <div class="scale-pricing">
-                                    <div class="scale-pricing-row">
-                                        <span>Preço/kg</span>
-                                        <strong id="scale-price-display">R$ 0,00</strong>
+                            <div class="scale-stage-grid">
+                                <div class="scale-stage-card scale-weight-panel">
+                                    <div class="scale-stage-label">Peso atual</div>
+                                    <div class="scale-weight-display" id="scale-weight-display">
+                                        <span class="scale-weight-value" id="scale-weight-value">0,000</span>
+                                        <span class="scale-weight-unit">kg</span>
                                     </div>
-                                    <div class="scale-pricing-row scale-pricing-total">
-                                        <span>Total</span>
-                                        <strong id="scale-total-display">R$ 0,00</strong>
+                                    <div class="scale-meta">
+                                        <span id="scale-stable-badge" class="scale-badge">—</span>
+                                        <span id="scale-mode-label" class="scale-mode-label">Parada</span>
+                                    </div>
+                                    <div class="scale-pricing">
+                                        <div class="scale-pricing-row">
+                                            <span>Preço/kg</span>
+                                            <strong id="scale-price-display">R$ 0,00</strong>
+                                        </div>
+                                        <div class="scale-pricing-row scale-pricing-total">
+                                            <span>Total</span>
+                                            <strong id="scale-total-display">R$ 0,00</strong>
+                                        </div>
                                     </div>
                                 </div>
 
-                                <div class="scale-card-activation">
-                                    <label for="scale-card-code-input">Número do cartão</label>
-                                    <input id="scale-card-code-input" type="number" min="1" step="1" placeholder="Ex: 12" inputmode="numeric">
-                                    <button id="scale-activate-card-btn" class="btn-primary scale-activate-btn" type="button" disabled>
-                                        Ativar cartão
-                                    </button>
-                                    <small class="scale-hint">Informe o cartão após o peso estabilizar.</small>
-                                </div>
+                                <div class="scale-stage-card scale-actions-panel">
+                                    <div class="scale-card-activation">
+                                        <div class="scale-stage-label">Comanda</div>
+                                        <div class="scale-card-combobox" id="scale-card-combobox">
+                                            <div class="scale-card-search-row">
+                                                <input
+                                                    id="scale-card-code-input"
+                                                    type="text"
+                                                    inputmode="numeric"
+                                                    autocomplete="off"
+                                                    placeholder="Digite o número..."
+                                                    aria-autocomplete="list"
+                                                    aria-controls="scale-card-results"
+                                                >
+                                                <button id="scale-card-refresh-btn" class="btn-secondary" type="button" title="Buscar novamente">↻</button>
+                                            </div>
+                                            <div id="scale-card-results" class="scale-card-results" role="listbox" hidden></div>
+                                            <p id="scale-card-empty" class="scale-card-empty" hidden>
+                                                Nenhuma comanda cadastrada
+                                            </p>
+                                        </div>
+                                        <button id="scale-activate-card-btn" class="btn-primary scale-activate-btn" type="button" disabled>
+                                            Ativar cartão
+                                        </button>
+                                        <small id="scale-card-hint" class="scale-hint">Digite para buscar comandas disponíveis.</small>
+                                    </div>
 
-                                <button id="scale-print-btn" class="btn-secondary scale-print-btn" type="button">
-                                    Imprimir pesagem
-                                </button>
+                                    <div class="scale-print-block">
+                                        <div class="scale-stage-label">Impressão</div>
+                                        <button id="scale-print-btn" class="btn-secondary scale-print-btn" type="button">
+                                            Imprimir pesagem
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         </section>
                     </div>
