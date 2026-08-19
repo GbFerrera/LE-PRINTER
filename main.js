@@ -197,6 +197,26 @@ async function sendReceiptToPrinter(receipt, printerName, printOptions = null) {
   return { success: false, mode: 'printer', message: response.error || 'Falha ao imprimir' };
 }
 
+async function sendPaperCut(printerName) {
+  if (!printerProcess || !printerReady || !printerName) {
+    return { success: false, mode: 'skipped', message: 'Corte indisponível sem impressora conectada' };
+  }
+
+  try {
+    const response = await sendPrinterCommand(buildPrinterCommandPayload({
+      action: 'cut',
+      printer: printerName,
+    }));
+    if (response.success) {
+      return { success: true, mode: 'printer', message: response.message || 'Corte enviado' };
+    }
+    return { success: false, mode: 'printer', message: response.error || 'Falha ao cortar papel' };
+  } catch (error) {
+    console.warn('Paper cut failed:', error.message);
+    return { success: false, mode: 'printer', message: error.message || 'Falha ao cortar papel' };
+  }
+}
+
 // Backend configuration
 const BACKEND_URL = 'https://api.linkeats.com.br';
 const backendUrl = new URL(BACKEND_URL);
@@ -221,6 +241,111 @@ async function handlePrintOrderEvent(payload) {
     console.error('Error handling print-order event:', error);
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('print-result', { orderId: payload.id, success: false, mode: 'error', message: error.message, auto: true });
+    }
+  }
+}
+
+async function printFiscalDocument(payload = {}) {
+  const base64 = String(payload?.base64 || '').trim();
+  const title = String(payload?.title || 'Cupom fiscal');
+  const mimeType = String(payload?.mimeType || '').toLowerCase();
+
+  if (!base64) {
+    return { success: false, mode: 'error', message: 'Cupom fiscal vazio' };
+  }
+
+  const routing = getPrinterRouting();
+  const printerName = routing.defaultPrinter || store.get('selectedPrinter') || undefined;
+  const sanitized = base64.replace(/\s/g, '');
+  const buffer = Buffer.from(sanitized, 'base64');
+  const isPdf = mimeType.includes('pdf') || sanitized.startsWith('JVBERi0');
+
+  if (isPdf) {
+    const tmpPath = path.join(app.getPath('temp'), `fiscal-${Date.now()}.pdf`);
+    fs.writeFileSync(tmpPath, buffer);
+    const result = await printFileWithHiddenWindow(`file://${tmpPath.replace(/\\/g, '/')}`, printerName, title, () => {
+      try { fs.unlinkSync(tmpPath); } catch {}
+    });
+    if (result.success && printerName) {
+      await sendPaperCut(printerName);
+    }
+    return result;
+  }
+
+  const html = buffer.toString('utf-8');
+  const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+  const result = await printFileWithHiddenWindow(dataUrl, printerName, title);
+  if (result.success && printerName) {
+    await sendPaperCut(printerName);
+  }
+  return result;
+}
+
+function printFileWithHiddenWindow(url, printerName, title, onDone) {
+  return new Promise((resolve) => {
+    const win = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        offscreen: true,
+        sandbox: true,
+      },
+    });
+
+    const finish = (result) => {
+      try {
+        if (!win.isDestroyed()) win.close();
+      } catch {}
+      if (typeof onDone === 'function') onDone();
+      resolve(result);
+    };
+
+    win.webContents.on('did-fail-load', (_event, _code, description) => {
+      finish({ success: false, mode: 'printer', message: description || 'Falha ao carregar cupom fiscal' });
+    });
+
+    win.webContents.on('did-finish-load', () => {
+      win.webContents.print({
+        silent: Boolean(printerName),
+        deviceName: printerName,
+        printBackground: true,
+      }, (success, failureReason) => {
+        finish({
+          success: Boolean(success),
+          mode: 'printer',
+          message: success ? `${title} enviado para a impressora` : (failureReason || 'Falha ao imprimir cupom fiscal'),
+        });
+      });
+    });
+
+    win.loadURL(url).catch((error) => {
+      finish({ success: false, mode: 'printer', message: error.message || 'Falha ao abrir cupom fiscal' });
+    });
+  });
+}
+
+async function handlePrintFiscalEvent(payload) {
+  try {
+    console.log('🧾 Print fiscal event received:', payload?.id || payload?.title);
+    const result = await printFiscalDocument(payload);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('print-result', {
+        orderId: payload?.id || 'fiscal-document',
+        success: result.success,
+        mode: result.mode,
+        message: result.message,
+        auto: false,
+      });
+    }
+  } catch (error) {
+    console.error('Error handling print-fiscal event:', error);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('print-result', {
+        orderId: payload?.id || 'fiscal-document',
+        success: false,
+        mode: 'error',
+        message: error.message,
+        auto: false,
+      });
     }
   }
 }
@@ -741,6 +866,8 @@ function connectWebSocket() {
             }
           });
         }
+      } else if (data.type === 'print-fiscal') {
+        handlePrintFiscalEvent(data.payload || {});
       } else if (data.type === 'order-status-update') {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('order-status-update', data.payload);

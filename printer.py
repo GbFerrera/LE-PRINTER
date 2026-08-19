@@ -1015,6 +1015,17 @@ def processar_comando(comando):
             )
             return imprimir_texto(texto_teste, None, font_size, None, paper_width)
 
+        if action == 'cut':
+            impressora_corte = impressora or obter_impressora_padrao()
+            if not impressora_corte:
+                return {"success": False, "error": "Nenhuma impressora disponível"}
+            cortou = cortar_papel(impressora_corte)
+            return {
+                "success": cortou,
+                "message": "Corte enviado para a impressora" if cortou else "Corte não disponível nesta impressora",
+                "cut": cortou,
+            }
+
         return {"success": False, "error": f"Ação desconhecida: {action}"}
 
     except Exception as e:
