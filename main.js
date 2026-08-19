@@ -23,6 +23,8 @@ const {
   normalizePrinterRouting,
   splitOrderPrintJobs,
   splitTabPrintJobs,
+  resolvePrintOptionsForPrinter,
+  filterJobsForAutoPrint,
 } = require('./printerRouting');
 
 // Configurações para resolver problemas no Windows
@@ -73,6 +75,9 @@ let selectedPrinter = store.get('selectedPrinter', null);
 let printerRouting = normalizePrinterRouting({
   defaultPrinter: store.get('selectedPrinter', null),
   routes: store.get('printerRoutes', []),
+}, {
+  fontScale: normalizeFontScale(store.get('fontScale', store.get('fontSize', DEFAULT_FONT_SCALE))),
+  paperWidth: store.get('paperWidth', '58mm') === '80mm' ? '80mm' : '58mm',
 });
 if (!printerRouting.defaultPrinter && selectedPrinter) {
   printerRouting.defaultPrinter = selectedPrinter;
@@ -124,15 +129,19 @@ function getPrintOptions() {
   return { paperWidth, fontScale };
 }
 
+function getRoutingDefaults() {
+  return getPrintOptions();
+}
+
 function getPrinterRouting() {
   return normalizePrinterRouting({
     defaultPrinter: printerRouting.defaultPrinter || selectedPrinter || null,
     routes: printerRouting.routes || [],
-  });
+  }, getRoutingDefaults());
 }
 
 function persistPrinterRouting(nextRouting) {
-  printerRouting = normalizePrinterRouting(nextRouting);
+  printerRouting = normalizePrinterRouting(nextRouting, getRoutingDefaults());
   selectedPrinter = printerRouting.defaultPrinter || null;
   store.set('printerRoutes', printerRouting.routes);
   store.set('selectedPrinter', selectedPrinter);
@@ -141,7 +150,8 @@ function persistPrinterRouting(nextRouting) {
 
 function buildReceiptForOrder(order, job = {}) {
   const options = {
-    ...getPrintOptions(),
+    paperWidth: job.paperWidth || paperWidth,
+    fontScale: job.fontScale != null ? job.fontScale : fontScale,
     items: job.order?.items,
     includePayment: job.includePayment,
     includeClient: job.includeClient,
@@ -166,12 +176,19 @@ function buildPrinterCommandPayload(extra = {}) {
   };
 }
 
-async function sendReceiptToPrinter(receipt, printerName) {
+async function sendReceiptToPrinter(receipt, printerName, printOptions = null) {
+  const opts = printOptions || resolvePrintOptionsForPrinter(
+    printerName,
+    getPrinterRouting(),
+    getRoutingDefaults()
+  );
   const response = await sendPrinterCommand(buildPrinterCommandPayload({
     action: 'print',
     receipt,
     text: documentToPlainText(receipt),
     printer: printerName || undefined,
+    font_scale: opts.fontScale,
+    paper_width: opts.paperWidth,
   }));
 
   if (response.success) {
@@ -190,7 +207,7 @@ const WS_URL = `${wsProtocol}//${backendUrl.host}/ws`;
 async function handlePrintOrderEvent(payload) {
   try {
     console.log(`🖨️ Print order event received: ${payload.id}`);
-    const result = await printOrder(payload);
+    const result = await printOrder(payload, { auto: true });
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('print-result', {
         orderId: payload.id,
@@ -469,26 +486,56 @@ function sendPrinterCommand(command) {
 
 // Print order function
 // Returns { success, mode: 'simulation'|'printer', message }
-async function printOrder(order) {
+async function printOrder(order, options = {}) {
   const routing = getPrinterRouting();
-  const jobs = order?.kind === 'tab_print'
-    ? splitTabPrintJobs(order, routing)
-    : splitOrderPrintJobs(order, routing);
+  const defaults = getRoutingDefaults();
+  const auto = options.auto === true;
+  let jobs = order?.kind === 'tab_print'
+    ? splitTabPrintJobs(order, routing, defaults)
+    : splitOrderPrintJobs(order, routing, defaults);
+
+  if (auto) {
+    jobs = filterJobsForAutoPrint(jobs, routing, isAutoPrintEnabled);
+    if (!jobs.length) {
+      return {
+        success: true,
+        mode: 'skipped',
+        message: 'Nenhuma impressora com impressão automática habilitada para este pedido',
+      };
+    }
+  }
+
+  // Evita via vazia na principal
+  jobs = jobs.filter((job) => {
+    if (order?.kind === 'tab_print') return true;
+    return Array.isArray(job?.order?.items) ? job.order.items.length > 0 : true;
+  });
+  if (!jobs.length) {
+    return {
+      success: true,
+      mode: 'skipped',
+      message: 'Nenhum item para imprimir nas impressoras selecionadas',
+    };
+  }
 
   if (!printerProcess || !printerReady) {
     console.log('=== SIMULAÇÃO DE IMPRESSÃO ===');
     for (const job of jobs) {
       const target = job.printer || routing.defaultPrinter || 'padrão do sistema';
-      console.log(`--- Via: ${target}${job.partial ? ' (parcial)' : ''} ---`);
+      const jobOptions = {
+        paperWidth: job.paperWidth || defaults.paperWidth,
+        fontScale: job.fontScale != null ? job.fontScale : defaults.fontScale,
+      };
+      console.log(`--- Via: ${target}${job.partial ? ' (parcial)' : ''} · fonte ${jobOptions.fontScale} · ${jobOptions.paperWidth} ---`);
       console.log(order?.kind === 'tab_print'
         ? formatTabText(job.tabData || order, companyName, {
-          ...getPrintOptions(),
+          ...jobOptions,
           includePayment: job.includePayment,
           routeLabel: job.routeLabel,
           itemFilter: job.itemFilter,
         })
         : formatOrderText(job.order || order, companyName, {
-          ...getPrintOptions(),
+          ...jobOptions,
           items: job.order?.items,
           includePayment: job.includePayment,
           includeClient: job.includeClient,
@@ -510,7 +557,14 @@ async function printOrder(order) {
     const messages = [];
     for (const job of jobs) {
       const receipt = buildReceiptForOrder(order, job);
-      const result = await sendReceiptToPrinter(receipt, job.printer || routing.defaultPrinter);
+      const result = await sendReceiptToPrinter(
+        receipt,
+        job.printer || routing.defaultPrinter,
+        {
+          fontScale: job.fontScale != null ? job.fontScale : defaults.fontScale,
+          paperWidth: job.paperWidth || defaults.paperWidth,
+        }
+      );
       if (!result.success) {
         return result;
       }
@@ -654,7 +708,7 @@ function connectWebSocket() {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('new-order', data.payload);
         }
-        if (!isAutoPrintEnabled) {
+        if (!isAutoPrintEnabled && !(getPrinterRouting().routes || []).some((route) => route.autoPrint)) {
           console.log('⚠️ Auto-print disabled — skipping automatic print for:', orderId);
         } else if (orderId && recentlyPrinted.has(orderId)) {
           // Deduplication: ignore if same order printed in last 3 seconds
@@ -672,10 +726,10 @@ function connectWebSocket() {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('new-order', data.payload);
         }
-        if (!isAutoPrintEnabled) {
+        if (!isAutoPrintEnabled && !(getPrinterRouting().routes || []).some((route) => route.autoPrint)) {
           console.log('⚠️ Auto-print disabled — skipping automatic tab print for:', tabPrintId);
         } else {
-          printOrder(data.payload).then((result) => {
+          printOrder(data.payload, { auto: true }).then((result) => {
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send('print-result', {
                 orderId: tabPrintId,
@@ -896,13 +950,23 @@ ipcMain.handle('list-menu-categories', async () => {
       };
     }
 
-    const categories = (Array.isArray(data?.categories) ? data.categories : [])
+    const rawCategories = Array.isArray(data?.categories)
+      ? data.categories
+      : Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data?.items)
+          ? data.items
+          : Array.isArray(data)
+            ? data
+            : [];
+
+    const categories = rawCategories
       .map((category) => {
         if (!category || typeof category !== 'object') return null;
-        const id = String(category.id || '').trim();
-        const name = String(category.name || '').trim();
+        const id = String(category.id || category.category_id || '').trim();
+        const name = String(category.name || category.title || category.label || '').trim();
         if (!id || !name) return null;
-        return { id, name, order: Number(category.order) || 0 };
+        return { id, name, order: Number(category.order ?? category.sort_order) || 0 };
       })
       .filter(Boolean)
       .sort((a, b) => (a.order - b.order) || a.name.localeCompare(b.name, 'pt-BR'));
@@ -1024,6 +1088,20 @@ ipcMain.handle('print-scale-ticket', async (event, payload = {}) => {
     return { success: false, message: 'Nenhum peso válido para imprimir. Coloque o item na balança.' };
   }
 
+  const scalePrinterName = payload?.printer
+    || store.get('scalePrinter', null)
+    || selectedPrinter
+    || null;
+  if (payload?.printer) {
+    store.set('scalePrinter', payload.printer || null);
+  }
+
+  const printOptions = resolvePrintOptionsForPrinter(
+    scalePrinterName,
+    getPrinterRouting(),
+    getRoutingDefaults()
+  );
+
   const receipt = buildScaleWeighReceipt(
     {
       kg,
@@ -1032,7 +1110,7 @@ ipcMain.handle('print-scale-ticket', async (event, payload = {}) => {
       at: payload?.at || new Date().toISOString(),
     },
     companyName,
-    getPrintOptions()
+    printOptions
   );
   const text = documentToPlainText(receipt);
 
@@ -1051,15 +1129,32 @@ ipcMain.handle('print-scale-ticket', async (event, payload = {}) => {
       action: 'print',
       receipt,
       text,
-      printer: selectedPrinter || undefined,
+      printer: scalePrinterName || undefined,
+      font_scale: printOptions.fontScale,
+      paper_width: printOptions.paperWidth,
     }));
     if (response.success) {
-      return { success: true, mode: 'printer', message: response.message || 'Pesagem enviada para a impressora' };
+      return {
+        success: true,
+        mode: 'printer',
+        message: response.message || `Pesagem enviada para ${scalePrinterName || 'impressora padrão'}`,
+        printer: scalePrinterName,
+      };
     }
     return { success: false, mode: 'printer', message: response.error || 'Falha ao imprimir pesagem' };
   } catch (error) {
     return { success: false, mode: 'printer', message: error.message };
   }
+});
+
+ipcMain.handle('get-scale-printer', () => {
+  return { printer: store.get('scalePrinter', null) || null };
+});
+
+ipcMain.handle('set-scale-printer', (_event, printerName) => {
+  const printer = printerName ? String(printerName) : null;
+  store.set('scalePrinter', printer);
+  return { success: true, printer };
 });
 
 ipcMain.handle('scale-activate-card', async (_event, payload = {}) => {

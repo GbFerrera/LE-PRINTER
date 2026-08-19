@@ -28,6 +28,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPaperWidth: () => ipcRenderer.invoke('get-paper-width'),
   printFontSample: () => ipcRenderer.invoke('print-font-sample'),
   printScaleTicket: (payload) => ipcRenderer.invoke('print-scale-ticket', payload),
+  getScalePrinter: () => ipcRenderer.invoke('get-scale-printer'),
+  setScalePrinter: (printer) => ipcRenderer.invoke('set-scale-printer', printer),
   scaleActivateCard: (payload) => ipcRenderer.invoke('scale-activate-card', payload),
   scaleListTabCards: (payload) => ipcRenderer.invoke('scale-list-tab-cards', payload),
   scaleListWeighableProducts: () => ipcRenderer.invoke('scale-list-weighable-products'),

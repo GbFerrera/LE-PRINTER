@@ -8,6 +8,11 @@ const pairLoginBtn = document.getElementById('pair-login-btn');
 const reconnectDeviceBtn = document.getElementById('reconnect-device-btn');
 const printerSelect = document.getElementById('printer-select');
 const refreshPrintersBtn = document.getElementById('refresh-printers-btn');
+const testPrinterBtn = document.getElementById('test-printer-btn');
+const openPrintConfigBtn = document.getElementById('open-print-config-btn');
+const openScaleConfigBtn = document.getElementById('open-scale-config-btn');
+const printConfigDrawer = document.getElementById('print-config-drawer');
+const scaleConfigDrawer = document.getElementById('scale-config-drawer');
 const connectionIndicator = document.getElementById('connection-indicator');
 const connectionText = document.getElementById('connection-text');
 const autoPrintToggle = document.getElementById('auto-print-toggle');
@@ -52,6 +57,7 @@ const scaleSendPriceBtn = document.getElementById('scale-send-price-btn');
 const scalePriceDisplay = document.getElementById('scale-price-display');
 const scaleTotalDisplay = document.getElementById('scale-total-display');
 const scalePrintBtn = document.getElementById('scale-print-btn');
+const scalePrinterSelect = document.getElementById('scale-printer-select');
 const scaleCardCodeInput = document.getElementById('scale-card-code-input');
 const scaleActivateCardBtn = document.getElementById('scale-activate-card-btn');
 const scaleCardResults = document.getElementById('scale-card-results');
@@ -62,8 +68,10 @@ const scaleProductSelect = document.getElementById('scale-product-select');
 const scaleProductHint = document.getElementById('scale-product-hint');
 const printerRoutesList = document.getElementById('printer-routes-list');
 const addPrinterRouteBtn = document.getElementById('add-printer-route-btn');
+const refreshMenuCategoriesBtn = document.getElementById('refresh-menu-categories-btn');
 let availablePrinters = [];
 let menuCategories = [];
+let menuCategoriesError = '';
 let printerRouting = { defaultPrinter: null, routes: [] };
 let lastScaleReading = { kg: 0, pricePerKg: 0, total: 0, stable: false };
 let lastScalePortPath = '';
@@ -187,6 +195,7 @@ async function loadPrinters() {
         });
 
         renderPrinterRoutes();
+        await populateScalePrinterSelect(selected);
 
         if (printers.length === 0) {
             const opt = document.createElement('option');
@@ -209,7 +218,7 @@ async function loadPrinters() {
     } finally {
         if (refreshPrintersBtn) {
             refreshPrintersBtn.disabled = false;
-            refreshPrintersBtn.textContent = 'Atualizar Impressoras';
+            refreshPrintersBtn.textContent = 'Atualizar';
         }
     }
 }
@@ -259,6 +268,34 @@ async function loadPrinterRouting() {
     renderPrinterRoutes();
 }
 
+function buildFontScaleOptions(selectedScale = 4) {
+    const labels = {
+        1: 'Muito pequena',
+        2: 'Pequena',
+        3: 'Compacta',
+        4: 'Normal',
+        5: 'Média',
+        6: 'Média+',
+        7: 'Grande',
+        8: 'Muito grande',
+    };
+    return Object.entries(labels).map(([value, label]) => {
+        const selected = String(selectedScale) === String(value) ? ' selected' : '';
+        return `<option value="${value}"${selected}>${label}</option>`;
+    }).join('');
+}
+
+function buildPaperWidthOptions(selectedWidth = '58mm') {
+    const widths = [
+        { value: '58mm', label: '58mm' },
+        { value: '80mm', label: '80mm' },
+    ];
+    return widths.map(({ value, label }) => {
+        const selected = selectedWidth === value ? ' selected' : '';
+        return `<option value="${value}"${selected}>${label}</option>`;
+    }).join('');
+}
+
 async function savePrinterRouting() {
     if (!window.electronAPI.setPrinterRouting) return;
     const payload = {
@@ -267,6 +304,10 @@ async function savePrinterRouting() {
             id: route.id,
             printer: route.printer || '',
             categoryIds: Array.isArray(route.categoryIds) ? route.categoryIds : [],
+            fontScale: Number(route.fontScale) || 4,
+            paperWidth: route.paperWidth === '80mm' ? '80mm' : '58mm',
+            autoPrint: Boolean(route.autoPrint),
+            alsoPrintOnMain: Boolean(route.alsoPrintOnMain),
         })),
     };
     const result = await window.electronAPI.setPrinterRouting(payload);
@@ -275,9 +316,30 @@ async function savePrinterRouting() {
 
 async function loadMenuCategories() {
     if (!window.electronAPI.listMenuCategories) return;
-    const result = await window.electronAPI.listMenuCategories();
-    menuCategories = result?.success ? (result.categories || []) : [];
-    renderPrinterRoutes();
+    if (refreshMenuCategoriesBtn) {
+        refreshMenuCategoriesBtn.disabled = true;
+        refreshMenuCategoriesBtn.textContent = 'Atualizando categorias...';
+    }
+    try {
+        const result = await window.electronAPI.listMenuCategories();
+        menuCategories = result?.success ? (result.categories || []) : [];
+        menuCategoriesError = result?.success
+            ? ''
+            : (result?.message || 'Não foi possível carregar as categorias');
+        if (result?.success && !menuCategories.length) {
+            menuCategoriesError = 'Nenhuma categoria encontrada no cardápio.';
+        }
+        renderPrinterRoutes();
+    } catch (error) {
+        menuCategories = [];
+        menuCategoriesError = error?.message || 'Não foi possível carregar as categorias';
+        renderPrinterRoutes();
+    } finally {
+        if (refreshMenuCategoriesBtn) {
+            refreshMenuCategoriesBtn.disabled = false;
+            refreshMenuCategoriesBtn.textContent = 'Atualizar categorias';
+        }
+    }
 }
 
 function renderPrinterRoutes() {
@@ -291,29 +353,66 @@ function renderPrinterRoutes() {
 
     printerRoutesList.innerHTML = routes.map((route) => {
         const assignedElsewhere = getAssignedCategoryIds(route.id);
-        const categoryChecks = menuCategories.length
-            ? menuCategories.map((category) => {
-                const checked = (route.categoryIds || []).includes(category.id) ? ' checked' : '';
-                const disabled = assignedElsewhere.has(category.id) ? ' disabled' : '';
+        let categoryChecks = '';
+        if (menuCategories.length) {
+            categoryChecks = menuCategories.map((category) => {
+                const categoryId = String(category.id);
+                const checked = (route.categoryIds || []).map(String).includes(categoryId) ? ' checked' : '';
+                const disabled = assignedElsewhere.has(categoryId) ? ' disabled' : '';
                 return `
                     <label class="printer-route-category${disabled ? ' is-disabled' : ''}">
-                        <input type="checkbox" data-route-id="${escapeHtml(route.id)}" data-category-id="${escapeHtml(category.id)}"${checked}${disabled}>
+                        <input type="checkbox" data-route-id="${escapeHtml(route.id)}" data-category-id="${escapeHtml(categoryId)}"${checked}${disabled}>
                         <span>${escapeHtml(category.name)}</span>
                     </label>
                 `;
-            }).join('')
-            : '<p class="settings-help">Conecte à empresa para carregar as categorias do cardápio.</p>';
+            }).join('');
+        } else if (menuCategoriesError) {
+            categoryChecks = `<p class="settings-help">${escapeHtml(menuCategoriesError)}</p>`;
+        } else {
+            categoryChecks = '<p class="settings-help">Conecte à empresa para carregar as categorias do cardápio.</p>';
+        }
+
+        const missingPrinter = !route.printer;
+        const missingCategories = !(route.categoryIds || []).length;
+        const draftHint = missingPrinter || missingCategories
+            ? `<p class="settings-help">${missingPrinter ? 'Selecione a impressora. ' : ''}${missingCategories ? 'Marque ao menos uma categoria.' : ''}</p>`
+            : '';
 
         return `
             <div class="printer-route-card" data-route-id="${escapeHtml(route.id)}">
                 <div class="printer-route-header">
-                    <strong>Impressora adicional</strong>
+                    <strong>Impressora auxiliar</strong>
                     <button type="button" class="btn-link printer-route-remove" data-route-id="${escapeHtml(route.id)}">Remover</button>
                 </div>
                 <select class="printer-route-select" data-route-id="${escapeHtml(route.id)}">
                     ${buildPrinterOptions(route.printer || '')}
                 </select>
+                <div class="printer-route-print-options">
+                    <div class="form-group">
+                        <label>Fonte</label>
+                        <select class="printer-route-font-select" data-route-id="${escapeHtml(route.id)}">
+                            ${buildFontScaleOptions(route.fontScale || 4)}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Papel</label>
+                        <select class="printer-route-paper-select" data-route-id="${escapeHtml(route.id)}">
+                            ${buildPaperWidthOptions(route.paperWidth || '58mm')}
+                        </select>
+                    </div>
+                </div>
+                <div class="printer-route-switches">
+                    <label class="printer-route-switch">
+                        <input type="checkbox" class="printer-route-auto-print" data-route-id="${escapeHtml(route.id)}"${route.autoPrint ? ' checked' : ''}>
+                        <span>Impressão automática</span>
+                    </label>
+                    <label class="printer-route-switch">
+                        <input type="checkbox" class="printer-route-print-on-main" data-route-id="${escapeHtml(route.id)}"${route.alsoPrintOnMain ? ' checked' : ''}>
+                        <span>Também na principal</span>
+                    </label>
+                </div>
                 <div class="printer-route-categories">${categoryChecks}</div>
+                ${draftHint}
             </div>
         `;
     }).join('');
@@ -325,16 +424,57 @@ function renderPrinterRoutes() {
             if (!route) return;
             route.printer = select.value || '';
             await savePrinterRouting();
+            renderPrinterRoutes();
+        });
+    });
+
+    printerRoutesList.querySelectorAll('.printer-route-font-select').forEach((select) => {
+        select.addEventListener('change', async () => {
+            const routeId = select.dataset.routeId;
+            const route = printerRouting.routes.find((item) => item.id === routeId);
+            if (!route) return;
+            route.fontScale = Number(select.value) || 4;
+            await savePrinterRouting();
+        });
+    });
+
+    printerRoutesList.querySelectorAll('.printer-route-paper-select').forEach((select) => {
+        select.addEventListener('change', async () => {
+            const routeId = select.dataset.routeId;
+            const route = printerRouting.routes.find((item) => item.id === routeId);
+            if (!route) return;
+            route.paperWidth = select.value === '80mm' ? '80mm' : '58mm';
+            await savePrinterRouting();
+        });
+    });
+
+    printerRoutesList.querySelectorAll('.printer-route-auto-print').forEach((input) => {
+        input.addEventListener('change', async () => {
+            const routeId = input.dataset.routeId;
+            const route = printerRouting.routes.find((item) => item.id === routeId);
+            if (!route) return;
+            route.autoPrint = Boolean(input.checked);
+            await savePrinterRouting();
+        });
+    });
+
+    printerRoutesList.querySelectorAll('.printer-route-print-on-main').forEach((input) => {
+        input.addEventListener('change', async () => {
+            const routeId = input.dataset.routeId;
+            const route = printerRouting.routes.find((item) => item.id === routeId);
+            if (!route) return;
+            route.alsoPrintOnMain = Boolean(input.checked);
+            await savePrinterRouting();
         });
     });
 
     printerRoutesList.querySelectorAll('.printer-route-category input[type="checkbox"]').forEach((input) => {
         input.addEventListener('change', async () => {
             const routeId = input.dataset.routeId;
-            const categoryId = input.dataset.categoryId;
+            const categoryId = String(input.dataset.categoryId || '');
             const route = printerRouting.routes.find((item) => item.id === routeId);
             if (!route) return;
-            const ids = new Set(route.categoryIds || []);
+            const ids = new Set((route.categoryIds || []).map(String));
             if (input.checked) ids.add(categoryId);
             else ids.delete(categoryId);
             route.categoryIds = Array.from(ids);
@@ -355,15 +495,24 @@ function renderPrinterRoutes() {
 }
 
 async function addPrinterRoute() {
+    const defaultFont = Number(fontScaleSelect?.value) || 4;
+    const defaultPaper = paperWidthSelect?.value === '80mm' ? '80mm' : '58mm';
     printerRouting.routes = Array.isArray(printerRouting.routes) ? printerRouting.routes : [];
     printerRouting.routes.push({
         id: createRouteId(),
         printer: '',
         categoryIds: [],
+        fontScale: defaultFont,
+        paperWidth: defaultPaper,
+        autoPrint: false,
+        alsoPrintOnMain: false,
     });
     await savePrinterRouting();
     renderPrinterRoutes();
-    showStatus('Nova impressora adicionada — selecione o equipamento e as categorias', 'info');
+    if (!menuCategories.length) {
+        loadMenuCategories().catch(() => {});
+    }
+    showStatus('Nova impressora adicionada — selecione o equipamento, tamanho e categorias', 'success');
 }
 
 // Load auto-print status
@@ -562,11 +711,17 @@ function clearScaleCardSelection() {
 
 function setScaleWeighingBusy(busy) {
     if (scaleProductSelect) scaleProductSelect.disabled = busy || scaleProductsLoading;
-    if (scaleCardCodeInput) scaleCardCodeInput.disabled = busy || scaleCardsLoading;
+    // Mantém o campo do cartão editável enquanto carrega listas.
+    if (scaleCardCodeInput) scaleCardCodeInput.disabled = Boolean(scaleCardActivating);
     if (scaleCardRefreshBtn) {
         scaleCardRefreshBtn.disabled = busy;
         scaleCardRefreshBtn.classList.toggle('is-busy', busy);
     }
+}
+
+function syncScaleCardInputEnabled() {
+    if (!scaleCardCodeInput) return;
+    scaleCardCodeInput.disabled = Boolean(scaleCardActivating);
 }
 
 function renderScaleCardLoadingState(message = 'Buscando cartões...') {
@@ -698,6 +853,7 @@ async function activateScaleCardByCode(code) {
     const total = kg * (Number.isFinite(pricePerKg) ? pricePerKg : 0);
 
     scaleCardActivating = true;
+    syncScaleCardInputEnabled();
     const isActiveCard = Boolean(card?.active);
     const cardLabel = String(cardCode).padStart(3, '0');
     const productName =
@@ -750,6 +906,7 @@ async function activateScaleCardByCode(code) {
         }
     } finally {
         scaleCardActivating = false;
+        syncScaleCardInputEnabled();
         updateScaleActionButtons();
         const q = String(scaleCardCodeInput?.value || '').trim();
         if (q && (document.activeElement === scaleCardCodeInput || scaleSelectedCardCode != null)) {
@@ -781,10 +938,11 @@ async function loadScaleTabCards(query = '', options = {}) {
         if (!silent && scaleCardRefreshBtn && !scaleProductsLoading) {
             scaleCardRefreshBtn.disabled = false;
         }
+        syncScaleCardInputEnabled();
 
         const currentQuery = String(scaleCardCodeInput?.value || query || '').trim();
         if (currentQuery) {
-            renderScaleCardResults(currentQuery, { open: true });
+            renderScaleCardResults(currentQuery, { open: document.activeElement === scaleCardCodeInput });
         } else {
             renderScaleCardResults('', { open: false });
             if (scaleCardHint && !scaleCardActivating) {
@@ -863,7 +1021,7 @@ async function loadScaleWeighingData(query = '') {
     } finally {
         if (token === scaleWeighingLoadToken) {
             if (scaleProductSelect) scaleProductSelect.disabled = false;
-            if (scaleCardCodeInput) scaleCardCodeInput.disabled = false;
+            syncScaleCardInputEnabled();
             setScaleWeighingBusy(false);
         }
     }
@@ -1004,6 +1162,68 @@ async function loadScalePorts(preferredPath) {
     }
 }
 
+async function populateScalePrinterSelect(fallbackSelected = '') {
+    if (!scalePrinterSelect) return;
+    let preferred = '';
+    try {
+        if (window.electronAPI.getScalePrinter) {
+            const result = await window.electronAPI.getScalePrinter();
+            preferred = result?.printer || '';
+        }
+    } catch {}
+
+    const current = preferred || scalePrinterSelect.value || fallbackSelected || '';
+    scalePrinterSelect.innerHTML = '<option value="">Usar impressora padrão</option>';
+    availablePrinters.forEach((name) => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        scalePrinterSelect.appendChild(opt);
+    });
+    if (current && [...scalePrinterSelect.options].some((o) => o.value === current)) {
+        scalePrinterSelect.value = current;
+    }
+}
+
+async function ensureScaleAutoConnect() {
+    if (!window.electronAPI.scaleConnect || !window.electronAPI.scaleGetStatus) return;
+    try {
+        await loadScalePorts(scalePortSelect?.value || lastScalePortPath);
+        const status = await window.electronAPI.scaleGetStatus();
+        applyScaleStatus(status);
+        if (status?.running || status?.mode === 'detecting') {
+            return status;
+        }
+
+        if (scaleConnectBtn) {
+            scaleConnectBtn.disabled = true;
+            scaleConnectBtn.textContent = 'Detectando...';
+        }
+        if (scaleProtocolHint) {
+            scaleProtocolHint.textContent = 'Conectando balança automaticamente...';
+        }
+        showStatus('Conectando balança...', 'info');
+
+        const result = await window.electronAPI.scaleConnect({
+            path: scalePortSelect?.value || lastScalePortPath || undefined,
+        });
+        applyScaleStatus(result);
+        if (result?.success && result.running) {
+            showStatus(
+                `Balança em ${result.portPath} @ ${result.baudRate} (${result.protocol?.name || result.protocolId})`,
+                'success'
+            );
+        } else if (result?.error || result?.lastError) {
+            showStatus(result.error || result.lastError, 'error');
+        }
+        return result;
+    } catch (error) {
+        console.error('Auto-connect scale error:', error);
+        showStatus(error?.message || 'Falha ao conectar balança', 'error');
+        return null;
+    }
+}
+
 async function loadScalePanel() {
     if (!window.electronAPI.scaleGetStatus) return;
     try {
@@ -1011,7 +1231,11 @@ async function loadScalePanel() {
         if (status?.portPath) lastScalePortPath = status.portPath;
         await loadScalePorts(lastScalePortPath);
         applyScaleStatus(status);
+        await populateScalePrinterSelect(printerSelect?.value || '');
         await loadScaleWeighingData('');
+        if (!status?.running) {
+            await ensureScaleAutoConnect();
+        }
     } catch (error) {
         console.error('Error loading scale panel:', error);
     }
@@ -1088,9 +1312,11 @@ function setupAppTabs() {
                 else el.setAttribute('hidden', '');
             });
             if (name === 'scale') {
-                loadScalePorts(scalePortSelect?.value || lastScalePortPath);
+                populateScalePrinterSelect(printerSelect?.value || '');
                 loadScaleWeighingData(scaleCardCodeInput?.value || '');
+                ensureScaleAutoConnect();
             }
+            closeAllConfigDrawers();
         });
     });
 }
@@ -1181,12 +1407,17 @@ function setupScaleListeners() {
                 : lastScaleReading.pricePerKg;
             const kg = lastScaleReading.kg || 0;
             const total = kg * (Number.isFinite(pricePerKg) ? pricePerKg : 0);
+            const printer = scalePrinterSelect?.value || '';
             scalePrintBtn.disabled = true;
             try {
+                if (window.electronAPI.setScalePrinter) {
+                    await window.electronAPI.setScalePrinter(printer || null);
+                }
                 const result = await window.electronAPI.printScaleTicket({
                     kg,
                     pricePerKg,
                     total,
+                    printer: printer || null,
                     at: new Date().toISOString(),
                 });
                 if (result?.success) {
@@ -1202,8 +1433,22 @@ function setupScaleListeners() {
         });
     }
 
+    if (scalePrinterSelect) {
+        scalePrinterSelect.addEventListener('change', async () => {
+            if (!window.electronAPI.setScalePrinter) return;
+            const printer = scalePrinterSelect.value || null;
+            await window.electronAPI.setScalePrinter(printer);
+            showStatus(
+                printer ? `Impressora da pesagem: ${printer}` : 'Pesagem usará a impressora padrão',
+                'success'
+            );
+        });
+    }
+
     if (scaleCardCodeInput) {
+        syncScaleCardInputEnabled();
         scaleCardCodeInput.addEventListener('focus', () => {
+            syncScaleCardInputEnabled();
             if (!scaleTabCards.length && !scaleCardsLoading) {
                 loadScaleTabCards(scaleCardCodeInput.value);
             }
@@ -1211,6 +1456,7 @@ function setupScaleListeners() {
             if (q) renderScaleCardResults(q, { open: true });
         });
         scaleCardCodeInput.addEventListener('input', () => {
+            syncScaleCardInputEnabled();
             const typed = String(scaleCardCodeInput.value || '').trim();
             const asNumber = Number(typed);
             if (Number.isInteger(asNumber) && asNumber > 0) {
@@ -1310,8 +1556,56 @@ function handleAccessRevoked(message) {
     );
 }
 
+function openConfigDrawer(drawer) {
+    if (!drawer) return;
+    drawer.classList.remove('hidden');
+    drawer.setAttribute('aria-hidden', 'false');
+}
+
+function closeConfigDrawer(drawer) {
+    if (!drawer) return;
+    drawer.classList.add('hidden');
+    drawer.setAttribute('aria-hidden', 'true');
+}
+
+function closeAllConfigDrawers() {
+    closeConfigDrawer(printConfigDrawer);
+    closeConfigDrawer(scaleConfigDrawer);
+}
+
+function setupConfigDrawers() {
+    if (openPrintConfigBtn) {
+        openPrintConfigBtn.addEventListener('click', async () => {
+            openConfigDrawer(printConfigDrawer);
+            await Promise.all([
+                loadPrinterRouting().catch(() => {}),
+                loadMenuCategories().catch(() => {}),
+            ]);
+        });
+    }
+    if (openScaleConfigBtn) {
+        openScaleConfigBtn.addEventListener('click', async () => {
+            openConfigDrawer(scaleConfigDrawer);
+            await loadScalePorts(scalePortSelect?.value || lastScalePortPath).catch(() => {});
+        });
+    }
+
+    document.querySelectorAll('[data-close-drawer]').forEach((el) => {
+        el.addEventListener('click', () => {
+            const id = el.getAttribute('data-close-drawer');
+            closeConfigDrawer(document.getElementById(id));
+        });
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeAllConfigDrawers();
+    });
+}
+
 // Setup event listeners
 function setupEventListeners() {
+    setupConfigDrawers();
+
     // Pairing (login screen)
     pairLoginBtn.addEventListener('click', handlePairLogin);
     pairCodeLoginInput.addEventListener('keydown', (e) => {
@@ -1334,8 +1628,32 @@ function setupEventListeners() {
         showStatus(name ? `Impressora principal: ${name}` : 'Usando impressora padrão do sistema', 'success');
     });
     refreshPrintersBtn.addEventListener('click', loadPrinters);
+    if (testPrinterBtn) {
+        testPrinterBtn.addEventListener('click', async () => {
+            testPrinterBtn.disabled = true;
+            try {
+                const result = await window.electronAPI.testPrinter();
+                showStatus(result?.message || 'Teste enviado para a impressora', result?.success ? 'success' : 'error');
+                if (result?.success) showToast(result.message || 'Teste de impressora enviado', 'success');
+            } catch (error) {
+                showStatus(error?.message || 'Erro ao testar impressora', 'error');
+            } finally {
+                testPrinterBtn.disabled = false;
+            }
+        });
+    }
     if (addPrinterRouteBtn) {
         addPrinterRouteBtn.addEventListener('click', addPrinterRoute);
+    }
+    if (refreshMenuCategoriesBtn) {
+        refreshMenuCategoriesBtn.addEventListener('click', async () => {
+            await loadMenuCategories();
+            if (menuCategories.length) {
+                showStatus(`${menuCategories.length} categoria(s) carregada(s)`, 'success');
+            } else {
+                showStatus(menuCategoriesError || 'Nenhuma categoria encontrada', 'error');
+            }
+        });
     }
 
     if (fontScaleSelect) {

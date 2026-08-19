@@ -61,81 +61,65 @@
                 <!-- ABA IMPRESSÃO -->
                 <div id="tab-print" class="tab-view active" role="tabpanel">
                     <div class="app-content">
-                        <div class="settings-panel">
-                            <h3>Impressão</h3>
+                        <div class="settings-panel settings-panel-basic">
+                            <div class="panel-title-row">
+                                <h3>Impressão</h3>
+                                <button id="open-print-config-btn" class="btn-config" type="button" title="Impressoras auxiliares">
+                                    Auxiliares
+                                </button>
+                            </div>
 
-                            <div class="setting-item">
+                            <div class="setting-item setting-item-compact">
                                 <label class="toggle-switch">
                                     <input type="checkbox" id="auto-print-toggle">
                                     <span class="slider"></span>
                                 </label>
-                                <span>Impressão Automática</span>
+                                <span>Automática</span>
                             </div>
 
-                            <h4>Impressora principal</h4>
-                            <div class="form-group">
-                                <select id="printer-select" style="width:100%;padding:8px;border:2px solid #e1e5e9;border-radius:8px;font-size:14px;">
-                                    <option value="">-- Padrão do sistema --</option>
+                            <div class="basic-field">
+                                <label for="printer-select">Impressora</label>
+                                <select id="printer-select">
+                                    <option value="">Padrão do sistema</option>
                                 </select>
                             </div>
-                            <small class="settings-help">Cupom completo e itens sem categoria definida nas rotas abaixo.</small>
-                            <button id="refresh-printers-btn" class="btn-secondary" style="width:100%;margin:10px 0;">Atualizar Impressoras</button>
 
-                            <h4>Impressoras por categoria</h4>
-                            <p class="settings-help">Configure impressoras extras e escolha quais categorias cada uma imprime (ex.: cozinha, bar).</p>
-                            <div id="printer-routes-list" class="printer-routes-list"></div>
-                            <button id="add-printer-route-btn" class="btn-secondary" type="button" style="width:100%;margin-bottom:10px;">+ Adicionar impressora</button>
+                            <div class="basic-actions-row">
+                                <button id="refresh-printers-btn" class="btn-secondary" type="button">Atualizar</button>
+                                <button id="test-printer-btn" class="btn-secondary" type="button">Testar</button>
+                            </div>
 
-                            <h4>Fonte</h4>
-                            <div class="form-group font-scale-group">
-                                <div class="font-scale-header">
-                                    <span id="font-scale-value">Normal</span>
+                            <div class="basic-options-grid">
+                                <div class="basic-field">
+                                    <label for="font-scale-select">Fonte</label>
+                                    <select id="font-scale-select">
+                                        <option value="1">Muito pequena</option>
+                                        <option value="2">Pequena</option>
+                                        <option value="3">Compacta</option>
+                                        <option value="4" selected>Normal</option>
+                                        <option value="5">Média</option>
+                                        <option value="6">Média+</option>
+                                        <option value="7">Grande</option>
+                                        <option value="8">Muito grande</option>
+                                    </select>
                                 </div>
-                                <select id="font-scale-select" style="width:100%;padding:8px;border:2px solid #e1e5e9;border-radius:8px;font-size:14px;">
-                                    <option value="1">Muito pequena</option>
-                                    <option value="2">Pequena</option>
-                                    <option value="3">Compacta</option>
-                                    <option value="4" selected>Normal</option>
-                                    <option value="5">Média</option>
-                                    <option value="6">Média+</option>
-                                    <option value="7">Grande</option>
-                                    <option value="8">Muito grande</option>
-                                </select>
-                                <button id="print-font-sample-btn" class="btn-secondary" style="width:100%;margin-top:8px;">Imprimir amostra de fonte</button>
-                                <small style="color:#888;display:block;margin-top:4px;">Só títulos em negrito. Use a amostra para escolher o tamanho ideal.</small>
+                                <div class="basic-field">
+                                    <label for="paper-width-select">Papel</label>
+                                    <select id="paper-width-select">
+                                        <option value="58mm">58mm</option>
+                                        <option value="80mm">80mm</option>
+                                    </select>
+                                </div>
                             </div>
 
-                            <h4>Papel</h4>
-                            <div class="form-group">
-                                <select id="paper-width-select" style="width:100%;padding:8px;border:2px solid #e1e5e9;border-radius:8px;font-size:14px;">
-                                    <option value="58mm">58mm (padrão)</option>
-                                    <option value="80mm">80mm</option>
-                                </select>
-                            </div>
+                            <button id="print-font-sample-btn" class="btn-secondary basic-sample-btn" type="button">Amostra de fonte</button>
+                            <span id="font-scale-value" class="hidden" aria-hidden="true">Normal</span>
 
-                            <hr class="settings-divider">
+                            <button id="reconnect-device-btn" class="btn-primary basic-connect-btn" type="button">Conectar</button>
 
-                            <p class="update-version-line" style="margin-bottom:12px;">
-                                Versão: <strong id="current-version">—</strong>
+                            <p class="update-version-line basic-version">
+                                v<strong id="current-version">—</strong>
                             </p>
-                            <div id="update-panel" class="hidden" aria-hidden="true">
-                                <div id="update-available-box" class="hidden">
-                                    <strong id="available-version">—</strong>
-                                    <p id="update-release-notes"></p>
-                                    <div id="update-progress-wrap" class="hidden">
-                                        <div class="update-progress-bar">
-                                            <div id="update-progress-fill" class="update-progress-fill"></div>
-                                        </div>
-                                        <span id="update-progress-text">0%</span>
-                                    </div>
-                                    <button id="update-download-btn" type="button">Baixar</button>
-                                    <button id="update-install-btn" class="hidden" type="button">Instalar</button>
-                                </div>
-                                <p id="update-status-text" class="hidden"></p>
-                                <button id="check-updates-btn" class="hidden" type="button">Verificar</button>
-                            </div>
-
-                            <button id="reconnect-device-btn" class="btn-secondary" style="width:100%">Conectar</button>
                         </div>
 
                         <div class="orders-panel">
@@ -163,34 +147,32 @@
                 <!-- ABA BALANÇA -->
                 <div id="tab-scale" class="tab-view" role="tabpanel" hidden>
                     <div class="scale-workspace">
-                        <aside class="scale-side">
-                            <h3>Balança</h3>
-                            <p class="scale-side-lead">Conecte o cabo USB e deixe o app detectar a porta automaticamente.</p>
+                        <aside class="scale-side scale-side-basic">
+                            <div class="panel-title-row">
+                                <h3>Balança</h3>
+                                <button id="open-scale-config-btn" class="btn-config" type="button" title="Configurações da balança">
+                                    Configurar
+                                </button>
+                            </div>
+                            <p class="scale-side-lead">Pese o item, escolha o produto e vincule ao cartão.</p>
 
-                            <div class="form-group">
-                                <label for="scale-port-select">Porta COM</label>
-                                <div class="scale-port-row">
-                                    <select id="scale-port-select">
-                                        <option value="">Automático</option>
-                                    </select>
-                                    <button id="scale-refresh-ports-btn" class="btn-secondary" type="button" title="Atualizar portas">↻</button>
+                            <div class="scale-status-summary">
+                                <div class="scale-status-row">
+                                    <span>Status</span>
+                                    <strong id="scale-mode-label">Parada</strong>
+                                </div>
+                                <div class="scale-status-row">
+                                    <span>Conexão</span>
+                                    <strong id="scale-detected-info">Baud e protocolo detectados ao conectar.</strong>
                                 </div>
                             </div>
-
-                            <p id="scale-detected-info" class="scale-detected-info">Baud e protocolo detectados ao conectar.</p>
-
-                            <div class="form-group">
-                                <label for="scale-price-input">Preço / kg (R$)</label>
-                                <input id="scale-price-input" type="number" min="0" max="9999.99" step="0.01" value="0" placeholder="Ex: 12,50">
-                            </div>
-                            <button id="scale-send-price-btn" class="btn-secondary" type="button" style="width:100%;margin-bottom:12px;" disabled>Enviar preço à balança</button>
 
                             <div class="scale-actions">
                                 <button id="scale-connect-btn" class="btn-primary" type="button">Conectar</button>
                                 <button id="scale-stop-btn" class="btn-secondary" type="button" disabled>Desconectar</button>
                             </div>
 
-                            <small id="scale-protocol-hint" class="scale-hint">Conecte o cabo da balança e clique em Conectar.</small>
+                            <small id="scale-protocol-hint" class="scale-hint">Use Configurar para porta COM e preço/kg.</small>
                         </aside>
 
                         <section class="scale-stage">
@@ -203,7 +185,6 @@
                                     </div>
                                     <div class="scale-meta">
                                         <span id="scale-stable-badge" class="scale-badge">—</span>
-                                        <span id="scale-mode-label" class="scale-mode-label">Parada</span>
                                     </div>
                                     <div class="scale-pricing">
                                         <div class="scale-pricing-row">
@@ -237,7 +218,6 @@
                                                     placeholder="Digite o número..."
                                                     aria-autocomplete="list"
                                                     aria-controls="scale-card-results"
-                                                    disabled
                                                 >
                                                 <button id="scale-card-refresh-btn" class="btn-secondary scale-refresh-loading" type="button" title="Atualizar produtos e cartões">↻</button>
                                             </div>
@@ -251,7 +231,13 @@
                                     </div>
 
                                     <div class="scale-print-block">
-                                        <div class="scale-stage-label">Impressão</div>
+                                        <div class="scale-stage-label">Impressão do peso</div>
+                                        <div class="basic-field scale-print-printer-field">
+                                            <label for="scale-printer-select">Impressora</label>
+                                            <select id="scale-printer-select">
+                                                <option value="">Usar impressora padrão</option>
+                                            </select>
+                                        </div>
                                         <button id="scale-print-btn" class="btn-secondary scale-print-btn" type="button">
                                             Imprimir pesagem
                                         </button>
@@ -272,6 +258,73 @@
     </div>
 
     <div id="app-toast" class="app-toast" hidden role="status" aria-live="polite"></div>
+
+    <!-- Configurações de Impressão -->
+    <div id="print-config-drawer" class="config-drawer hidden" aria-hidden="true">
+        <div class="config-drawer-backdrop" data-close-drawer="print-config-drawer"></div>
+        <aside class="config-drawer-panel" role="dialog" aria-labelledby="print-config-title">
+            <div class="config-drawer-header">
+                <h3 id="print-config-title">Configurações de impressão</h3>
+                <button type="button" class="close-btn" data-close-drawer="print-config-drawer">&times;</button>
+            </div>
+            <div class="config-drawer-body">
+                <h4>Impressoras auxiliares por categoria</h4>
+                <p class="settings-help">Itens das categorias abaixo saem só na auxiliar. Marque “Também na principal” se quiser duplicar. “Impressão automática” controla se essa auxiliar imprime sozinha.</p>
+                <div id="printer-routes-list" class="printer-routes-list"></div>
+                <button id="add-printer-route-btn" class="btn-secondary" type="button" style="width:100%;margin-bottom:8px;">+ Adicionar impressora</button>
+                <button id="refresh-menu-categories-btn" class="btn-secondary" type="button" style="width:100%;margin-bottom:16px;">Atualizar categorias</button>
+
+                <hr class="settings-divider">
+
+                <div id="update-panel" class="hidden" aria-hidden="true">
+                    <div id="update-available-box" class="hidden">
+                        <strong id="available-version">—</strong>
+                        <p id="update-release-notes"></p>
+                        <div id="update-progress-wrap" class="hidden">
+                            <div class="update-progress-bar">
+                                <div id="update-progress-fill" class="update-progress-fill"></div>
+                            </div>
+                            <span id="update-progress-text">0%</span>
+                        </div>
+                        <button id="update-download-btn" type="button">Baixar</button>
+                        <button id="update-install-btn" class="hidden" type="button">Instalar</button>
+                    </div>
+                    <p id="update-status-text" class="hidden"></p>
+                    <button id="check-updates-btn" class="hidden" type="button">Verificar</button>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Configurações da Balança -->
+    <div id="scale-config-drawer" class="config-drawer hidden" aria-hidden="true">
+        <div class="config-drawer-backdrop" data-close-drawer="scale-config-drawer"></div>
+        <aside class="config-drawer-panel" role="dialog" aria-labelledby="scale-config-title">
+            <div class="config-drawer-header">
+                <h3 id="scale-config-title">Configurações da balança</h3>
+                <button type="button" class="close-btn" data-close-drawer="scale-config-drawer">&times;</button>
+            </div>
+            <div class="config-drawer-body">
+                <div class="form-group">
+                    <label for="scale-port-select">Porta COM</label>
+                    <div class="scale-port-row">
+                        <select id="scale-port-select">
+                            <option value="">Automático</option>
+                        </select>
+                        <button id="scale-refresh-ports-btn" class="btn-secondary" type="button" title="Atualizar portas">↻</button>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="scale-price-input">Preço / kg (R$)</label>
+                    <input id="scale-price-input" type="number" min="0" max="9999.99" step="0.01" value="0" placeholder="Ex: 12,50">
+                </div>
+                <button id="scale-send-price-btn" class="btn-secondary" type="button" style="width:100%;margin-bottom:12px;" disabled>Enviar preço à balança</button>
+
+                <p class="settings-help">Ao abrir a aba Balança o app tenta conectar automaticamente. A impressora do cupom de peso fica na área de impressão da pesagem.</p>
+            </div>
+        </aside>
+    </div>
 
     <!-- Order Modal -->
     <div id="order-modal" class="modal hidden">

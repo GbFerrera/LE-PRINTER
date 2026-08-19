@@ -60,6 +60,7 @@
       "index.html",
       "styles.css",
       "preload.js",
+      "printerRouting.js",
       "scale/**/*",
       "public/**/*",
       "!printer.py",
