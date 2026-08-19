@@ -1026,6 +1026,44 @@ def processar_comando(comando):
                 "cut": cortou,
             }
 
+        if action == 'print_image':
+            if not HAS_PIL:
+                return {"success": False, "error": "Pillow não instalado. Execute: pip install Pillow"}
+            image_base64 = comando.get('image_base64') or comando.get('base64')
+            if not image_base64:
+                return {"success": False, "error": "Imagem vazia"}
+            try:
+                import base64
+                from io import BytesIO
+
+                raw = base64.b64decode(str(image_base64).strip())
+                img = Image.open(BytesIO(raw)).convert('L')
+            except Exception as exc:
+                return {"success": False, "error": f"Imagem inválida: {exc}"}
+
+            if not impressora:
+                impressora = obter_impressora_padrao()
+            if not impressora:
+                return {"success": False, "error": "Nenhuma impressora disponível"}
+
+            preferido = comando.get('paper_width', paper_width)
+            paper_efetivo = detectar_paper_width_dispositivo(impressora, preferido)
+            escala = normalizar_escala_fonte(font_size)
+            max_slice = 2400 if escala >= 6 else None
+
+            try:
+                if HAS_IMAGEWIN and HAS_WIN32GUI:
+                    modo = imprimir_imagem_gdi(img, impressora, paper_efetivo, max_slice=max_slice)
+                    return {
+                        "success": True,
+                        "message": f"Cupom fiscal enviado para '{impressora}' ({modo})",
+                        "mode": modo,
+                    }
+            except Exception as exc:
+                return {"success": False, "error": str(exc)}
+
+            return {"success": False, "error": "Impressão de imagem indisponível neste ambiente"}
+
         return {"success": False, "error": f"Ação desconhecida: {action}"}
 
     except Exception as e:

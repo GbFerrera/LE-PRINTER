@@ -255,38 +255,236 @@ async function printFiscalDocument(payload = {}) {
   }
 
   const routing = getPrinterRouting();
+  const defaults = getRoutingDefaults();
   const printerName = routing.defaultPrinter || store.get('selectedPrinter') || undefined;
+  const fiscalPaperWidth = payload?.paper_width || payload?.paperWidth || defaults.paperWidth || paperWidth;
   const sanitized = base64.replace(/\s/g, '');
   const buffer = Buffer.from(sanitized, 'base64');
   const isPdf = mimeType.includes('pdf') || sanitized.startsWith('JVBERi0');
+  const printOptions = { paperWidth: fiscalPaperWidth, isPdf, rasterize: true };
 
   if (isPdf) {
     const tmpPath = path.join(app.getPath('temp'), `fiscal-${Date.now()}.pdf`);
     fs.writeFileSync(tmpPath, buffer);
-    const result = await printFileWithHiddenWindow(`file://${tmpPath.replace(/\\/g, '/')}`, printerName, title, () => {
+    const fileUrl = `file://${tmpPath.replace(/\\/g, '/')}`;
+    const result = await printFileWithHiddenWindow(fileUrl, printerName, title, () => {
       try { fs.unlinkSync(tmpPath); } catch {}
-    });
+    }, printOptions);
     if (result.success && printerName) {
       await sendPaperCut(printerName);
     }
     return result;
   }
 
-  const html = buffer.toString('utf-8');
-  const dataUrl = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
-  const result = await printFileWithHiddenWindow(dataUrl, printerName, title);
+  const html = wrapFiscalHtmlForThermal(buffer.toString('utf-8'), fiscalPaperWidth);
+  const tmpHtmlPath = path.join(app.getPath('temp'), `fiscal-${Date.now()}.html`);
+  fs.writeFileSync(tmpHtmlPath, html, 'utf-8');
+  const fileUrl = `file://${tmpHtmlPath.replace(/\\/g, '/')}`;
+  const result = await printFileWithHiddenWindow(fileUrl, printerName, title, () => {
+    try { fs.unlinkSync(tmpHtmlPath); } catch {}
+  }, printOptions);
   if (result.success && printerName) {
     await sendPaperCut(printerName);
   }
   return result;
 }
 
-function printFileWithHiddenWindow(url, printerName, title, onDone) {
+function getThermalPrintConfig(preferredPaperWidth) {
+  const resolved = preferredPaperWidth === '80mm' ? '80mm' : '58mm';
+  const is80 = resolved === '80mm';
+  return {
+    paperWidth: resolved,
+    widthMicrons: is80 ? 80000 : 58000,
+    windowPx: is80 ? 576 : 384,
+    cssWidth: resolved,
+  };
+}
+
+function wrapFiscalHtmlForThermal(html, preferredPaperWidth) {
+  const cfg = getThermalPrintConfig(preferredPaperWidth);
+  const thermalStyle = `
+<style id="linkeats-fiscal-thermal">
+  @page { size: ${cfg.cssWidth} auto; margin: 0; }
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: ${cfg.cssWidth} !important;
+    max-width: ${cfg.cssWidth} !important;
+    background: #fff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  body > * {
+    width: 100% !important;
+    max-width: ${cfg.cssWidth} !important;
+    box-sizing: border-box !important;
+  }
+  table, img, svg, canvas {
+    max-width: 100% !important;
+    height: auto !important;
+  }
+</style>`;
+
+  const trimmed = String(html || '').trim();
+  if (!trimmed) return `<!DOCTYPE html><html><head><meta charset="utf-8">${thermalStyle}</head><body></body></html>`;
+
+  if (/<html[\s>]/i.test(trimmed)) {
+    if (/<head[\s>]/i.test(trimmed)) {
+      return trimmed.replace(/<head([^>]*)>/i, `<head$1>${thermalStyle}`);
+    }
+    return trimmed.replace(/<html([^>]*)>/i, `<html$1><head><meta charset="utf-8">${thermalStyle}</head>`);
+  }
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">${thermalStyle}</head><body>${trimmed}</body></html>`;
+}
+
+async function sendRasterImageToPrinter(pngBuffer, printerName, title, cfg) {
+  const pngBase64 = pngBuffer.toString('base64');
+
+  if (process.platform === 'win32' && printerProcess && printerReady) {
+    try {
+      const response = await sendPrinterCommand(buildPrinterCommandPayload({
+        action: 'print_image',
+        image_base64: pngBase64,
+        printer: printerName || undefined,
+        paper_width: cfg.paperWidth,
+        font_scale: fontScale,
+      }));
+      if (response.success) {
+        return {
+          success: true,
+          mode: 'printer',
+          message: response.message || `${title} enviado para a impressora`,
+        };
+      }
+      return {
+        success: false,
+        mode: 'printer',
+        message: response.error || 'Falha ao imprimir cupom fiscal',
+      };
+    } catch (error) {
+      console.warn('Fiscal raster via Python failed, falling back to Electron print:', error.message);
+    }
+  }
+
+  const imgHtmlPath = path.join(app.getPath('temp'), `fiscal-img-${Date.now()}.html`);
+  const imgHtml = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  @page { size: ${cfg.cssWidth} auto; margin: 0; }
+  html, body { margin: 0; padding: 0; width: ${cfg.cssWidth}; background: #fff; }
+  img { width: 100%; height: auto; display: block; }
+</style></head>
+<body><img src="data:image/png;base64,${pngBase64}" alt="Cupom fiscal" /></body></html>`;
+  fs.writeFileSync(imgHtmlPath, imgHtml, 'utf-8');
+
+  const aspectHeightMicrons = Math.min(
+    Math.max(Math.round(cfg.widthMicrons * 2.5), 120000),
+    2500000
+  );
+
   return new Promise((resolve) => {
     const win = new BrowserWindow({
       show: false,
+      width: cfg.windowPx,
+      height: 1200,
+      webPreferences: { sandbox: true },
+    });
+
+    const finish = (result) => {
+      try { if (!win.isDestroyed()) win.close(); } catch {}
+      try { fs.unlinkSync(imgHtmlPath); } catch {}
+      resolve(result);
+    };
+
+    win.webContents.on('did-fail-load', (_event, _code, description) => {
+      finish({ success: false, mode: 'printer', message: description || 'Falha ao carregar cupom fiscal' });
+    });
+
+    win.webContents.on('did-finish-load', () => {
+      win.webContents.print({
+        silent: Boolean(printerName),
+        deviceName: printerName,
+        printBackground: true,
+        margins: { marginType: 'none' },
+        pageSize: {
+          width: cfg.widthMicrons,
+          height: aspectHeightMicrons,
+        },
+        scaleFactor: 100,
+      }, (success, failureReason) => {
+        finish({
+          success: Boolean(success),
+          mode: 'printer',
+          message: success ? `${title} enviado para a impressora` : (failureReason || 'Falha ao imprimir cupom fiscal'),
+        });
+      });
+    });
+
+    win.loadFile(imgHtmlPath).catch((error) => {
+      finish({ success: false, mode: 'printer', message: error.message || 'Falha ao abrir cupom fiscal' });
+    });
+  });
+}
+
+async function rasterizeFiscalDocument(url, cfg, isPdf) {
+  const win = new BrowserWindow({
+    show: false,
+    width: cfg.windowPx,
+    height: 1600,
+    webPreferences: { sandbox: true },
+  });
+
+  try {
+    await win.loadURL(url);
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, isPdf ? 1000 : 300));
+
+    const contentHeight = await win.webContents.executeJavaScript(`
+      Math.max(
+        document.body ? document.body.scrollHeight : 0,
+        document.documentElement ? document.documentElement.scrollHeight : 0,
+        320
+      )
+    `, true);
+
+    const targetHeight = Math.min(Math.max(Math.round(Number(contentHeight) || 800), 400), 12000);
+    win.setContentSize(cfg.windowPx, targetHeight);
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 200));
+
+    const image = await win.webContents.capturePage();
+    return image.toPNG();
+  } finally {
+    try { if (!win.isDestroyed()) win.close(); } catch {}
+  }
+}
+
+function printFileWithHiddenWindow(url, printerName, title, onDone, options = {}) {
+  const cfg = getThermalPrintConfig(options.paperWidth || paperWidth);
+  const isPdf = Boolean(options.isPdf);
+
+  if (options.rasterize) {
+    return rasterizeFiscalDocument(url, cfg, isPdf)
+      .then((pngBuffer) => sendRasterImageToPrinter(pngBuffer, printerName, title, cfg))
+      .then((result) => {
+        if (typeof onDone === 'function') onDone();
+        return result;
+      })
+      .catch((error) => {
+        if (typeof onDone === 'function') onDone();
+        return {
+          success: false,
+          mode: 'printer',
+          message: error.message || 'Falha ao preparar cupom fiscal',
+        };
+      });
+  }
+
+  return new Promise((resolve) => {
+    const win = new BrowserWindow({
+      show: false,
+      width: cfg.windowPx,
+      height: 1600,
       webPreferences: {
-        offscreen: true,
+        offscreen: false,
         sandbox: true,
       },
     });
@@ -303,11 +501,35 @@ function printFileWithHiddenWindow(url, printerName, title, onDone) {
       finish({ success: false, mode: 'printer', message: description || 'Falha ao carregar cupom fiscal' });
     });
 
-    win.webContents.on('did-finish-load', () => {
+    win.webContents.on('did-finish-load', async () => {
+      // PDF/HTML da Brasil NFe precisa de um instante para layout antes de imprimir.
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, isPdf ? 900 : 250));
+
+      let pageHeightMicrons = isPdf ? 450000 : 320000;
+      try {
+        const heightPx = await win.webContents.executeJavaScript(`
+          Math.max(
+            document.body ? document.body.scrollHeight : 0,
+            document.documentElement ? document.documentElement.scrollHeight : 0,
+            320
+          )
+        `, true);
+        // ~96dpi → microns (1px ≈ 264,58µm). Margem extra para não cortar o fim do cupom.
+        pageHeightMicrons = Math.min(Math.max(Math.round(Number(heightPx) * 265) + 12000, 120000), 2500000);
+      } catch (error) {
+        console.warn('Fiscal print height estimate failed:', error.message);
+      }
+
       win.webContents.print({
         silent: Boolean(printerName),
         deviceName: printerName,
         printBackground: true,
+        margins: { marginType: 'none' },
+        pageSize: {
+          width: cfg.widthMicrons,
+          height: pageHeightMicrons,
+        },
+        scaleFactor: 100,
       }, (success, failureReason) => {
         finish({
           success: Boolean(success),
