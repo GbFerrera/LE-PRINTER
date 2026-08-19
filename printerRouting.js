@@ -282,7 +282,11 @@ function splitTabPrintJobs(tabData, routing, defaults = {}) {
     }, normalized, defaults)];
   }
 
-  const allItems = (tabData?.orders || []).flatMap((order) => order?.items || []);
+  const weighableItems = Array.isArray(tabData?.weighable_items) ? tabData.weighable_items : [];
+  const allItems = [
+    ...weighableItems,
+    ...(tabData?.orders || []).flatMap((order) => order?.items || []),
+  ];
   const { groups, categoryMap, categoryRouteMap, defaultPrinter } = groupItemsByPrinter(allItems, normalized);
   const categoryNames = buildCategoryNamesById(normalized);
   const entries = Array.from(groups.entries()).filter(([, items]) => items.length > 0);

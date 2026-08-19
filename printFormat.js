@@ -259,16 +259,37 @@ function resolvePaymentSummary(order) {
 
 function formatItemBlock(item, index, receiptWidth = 32) {
   const lines = [];
-  const qty = Math.max(1, Number(item?.quantity) || 1);
+  const isWeighable =
+    item?.unit === 'kg' ||
+    item?.item_type === 'weighable' ||
+    item?.type === 'weighable';
+  const qty = Number(item?.quantity) || (isWeighable ? 0 : 1);
   const itemName = (item?.product?.name || item?.name || 'Item').toUpperCase();
-  const unitTotal = calculateItemUnitTotal(item);
-  const lineTotal = unitTotal * qty;
-  const unitLabel = qty === 1 ? '1 un' : `${qty} un`;
 
-  lines.push({
-    text: `${unitLabel} ${itemName} (${formatMoneyBR(unitTotal)} - ${formatMoneyBR(lineTotal)})`,
-    style: 'bold',
-  });
+  if (isWeighable) {
+    const pricePerKg = Number(item?.price) || 0;
+    const lineTotal = Number(
+      item?.line_total ??
+      item?.total ??
+      (Number.isFinite(qty) ? pricePerKg * qty : 0),
+    );
+    const weightLabel = formatWeightKg(qty);
+
+    lines.push({
+      text: `${weightLabel} ${itemName} (${formatMoneyBR(pricePerKg)}/kg - ${formatMoneyBR(lineTotal)})`,
+      style: 'bold',
+    });
+  } else {
+    const safeQty = Math.max(1, qty);
+    const unitTotal = calculateItemUnitTotal(item);
+    const lineTotal = unitTotal * safeQty;
+    const unitLabel = safeQty === 1 ? '1 un' : `${safeQty} un`;
+
+    lines.push({
+      text: `${unitLabel} ${itemName} (${formatMoneyBR(unitTotal)} - ${formatMoneyBR(lineTotal)})`,
+      style: 'bold',
+    });
+  }
 
   aggregateComplements(item?.complements).forEach((c) => {
     const linePrice = c.unitPrice * c.quantity;
@@ -557,6 +578,8 @@ function buildTabReceipt(tabData, companyName, options = {}) {
   const routeLabel = options.routeLabel ? String(options.routeLabel).trim() : '';
   const itemFilter = typeof options.itemFilter === 'function' ? options.itemFilter : null;
   const orders = Array.isArray(tabData?.orders) ? tabData.orders : [];
+  const weighableItems = (Array.isArray(tabData?.weighable_items) ? tabData.weighable_items : [])
+    .filter((item) => (itemFilter ? itemFilter(item) : true));
   const filteredOrders = orders.map((order) => {
     const items = (order?.items || []).filter((item) => (itemFilter ? itemFilter(item) : true));
     return { ...order, items };
@@ -574,12 +597,24 @@ function buildTabReceipt(tabData, companyName, options = {}) {
   }
   if (tabData?.customer_name) doc.push(`Responsavel: ${tabData.customer_name}`);
   if (tabData?.people_count) doc.push(`Pessoas: ${tabData.people_count}`);
-  doc.push(`Pedidos: ${filteredOrders.length}`);
+  const summaryParts = [];
+  if (filteredOrders.length > 0) summaryParts.push(`Pedidos: ${filteredOrders.length}`);
+  if (weighableItems.length > 0) summaryParts.push(`Pesagens: ${weighableItems.length}`);
+  if (summaryParts.length > 0) doc.push(summaryParts.join(' · '));
   if (tabData?.opened_at) doc.push(`Aberta em: ${formatDateTimeBR(tabData.opened_at)}`);
   if (routeLabel) doc.push(routeLabel);
   doc.push('');
 
   let tabItemsSubtotal = 0;
+
+  if (weighableItems.length > 0) {
+    doc.push(formatSection('Pesagem', receiptWidth), 'bold');
+    weighableItems.forEach((item, idx) => {
+      doc.pushAll(formatItemBlock(item, idx, receiptWidth));
+      tabItemsSubtotal += Number(item?.line_total ?? item?.total ?? 0);
+    });
+  }
+
   filteredOrders.forEach((order, orderIdx) => {
     doc.push(formatSection(`Pedido ${orderIdx + 1}`, receiptWidth), 'bold');
     doc.push(`Pedido: ${formatDisplayNumber(order?.id, order?.order_number)}`);
@@ -590,7 +625,13 @@ function buildTabReceipt(tabData, companyName, options = {}) {
 
     (order?.items || []).forEach((item, idx) => {
       doc.pushAll(formatItemBlock(item, idx, receiptWidth));
-      tabItemsSubtotal += calculateItemUnitTotal(item) * Math.max(1, Number(item?.quantity) || 1);
+      const isWeighable =
+        item?.unit === 'kg' ||
+        item?.item_type === 'weighable' ||
+        item?.type === 'weighable';
+      tabItemsSubtotal += isWeighable
+        ? Number(item?.line_total ?? item?.total ?? 0)
+        : calculateItemUnitTotal(item) * Math.max(1, Number(item?.quantity) || 1);
     });
 
     if (order?.observation) {
