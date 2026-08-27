@@ -16,6 +16,12 @@ const scaleConfigDrawer = document.getElementById('scale-config-drawer');
 const connectionIndicator = document.getElementById('connection-indicator');
 const connectionText = document.getElementById('connection-text');
 const autoPrintToggle = document.getElementById('auto-print-toggle');
+const openAutoPrintFiltersBtn = document.getElementById('open-auto-print-filters-btn');
+const autoPrintFiltersModal = document.getElementById('auto-print-filters-modal');
+const autoPrintFilterTable = document.getElementById('auto-print-filter-table');
+const autoPrintFilterPickup = document.getElementById('auto-print-filter-pickup');
+const autoPrintFilterDelivery = document.getElementById('auto-print-filter-delivery');
+const autoPrintFilterMarketplace = document.getElementById('auto-print-filter-marketplace');
 const fontScaleSelect = document.getElementById('font-scale-select');
 const fontScaleValue = document.getElementById('font-scale-value');
 const printFontSampleBtn = document.getElementById('print-font-sample-btn');
@@ -120,6 +126,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupAppTabs();
     await tryAutoConnect();
     await loadAutoPrintStatus();
+    await loadAutoPrintFilters();
     await loadFontSize();
     await loadPaperWidth();
     await loadScalePanel();
@@ -515,13 +522,75 @@ async function addPrinterRoute() {
     showStatus('Nova impressora adicionada — selecione o equipamento, tamanho e categorias', 'success');
 }
 
+const DEFAULT_AUTO_PRINT_FILTERS = {
+    table: true,
+    pickup: true,
+    delivery: true,
+    marketplace: true,
+};
+
 // Load auto-print status
 async function loadAutoPrintStatus() {
     try {
         const enabled = await window.electronAPI.getAutoPrintStatus();
         autoPrintToggle.checked = enabled;
+        updateAutoPrintGearState();
     } catch (error) {
         console.error('Error loading auto-print status:', error);
+    }
+}
+
+function updateAutoPrintGearState() {
+    if (!openAutoPrintFiltersBtn) return;
+    openAutoPrintFiltersBtn.disabled = !autoPrintToggle.checked;
+}
+
+function getAutoPrintFilterInputs() {
+    return [
+        { key: 'table', input: autoPrintFilterTable },
+        { key: 'pickup', input: autoPrintFilterPickup },
+        { key: 'delivery', input: autoPrintFilterDelivery },
+        { key: 'marketplace', input: autoPrintFilterMarketplace },
+    ].filter((entry) => entry.input);
+}
+
+function readAutoPrintFiltersFromUI() {
+    const filters = {};
+    getAutoPrintFilterInputs().forEach(({ key, input }) => {
+        filters[key] = Boolean(input.checked);
+    });
+    return filters;
+}
+
+function applyAutoPrintFiltersToUI(filters = {}) {
+    getAutoPrintFilterInputs().forEach(({ key, input }) => {
+        if (filters[key] != null) input.checked = Boolean(filters[key]);
+    });
+}
+
+async function loadAutoPrintFilters() {
+    try {
+        const filters = await window.electronAPI.getAutoPrintFilters();
+        applyAutoPrintFiltersToUI(filters);
+    } catch (error) {
+        console.error('Error loading auto-print filters:', error);
+    }
+}
+
+async function handleAutoPrintFiltersChange() {
+    try {
+        const filters = readAutoPrintFiltersFromUI();
+        const result = await window.electronAPI.setAutoPrintFilters(filters);
+        applyAutoPrintFiltersToUI(result?.filters || filters);
+        const enabledCount = Object.values(filters).filter(Boolean).length;
+        if (!enabledCount) {
+            showStatus('Nenhum tipo selecionado — impressão automática não imprimirá pedidos', 'info');
+        } else {
+            showStatus('Filtros de impressão automática atualizados', 'success');
+        }
+    } catch (error) {
+        showStatus(`Erro ao salvar filtros: ${error.message}`, 'error');
+        await loadAutoPrintFilters();
     }
 }
 
@@ -1573,6 +1642,37 @@ function closeAllConfigDrawers() {
     closeConfigDrawer(scaleConfigDrawer);
 }
 
+function openAutoPrintFiltersModal() {
+    if (!autoPrintFiltersModal) return;
+    autoPrintFiltersModal.classList.remove('hidden');
+    autoPrintFiltersModal.setAttribute('aria-hidden', 'false');
+}
+
+function closeAutoPrintFiltersModal() {
+    if (!autoPrintFiltersModal) return;
+    autoPrintFiltersModal.classList.add('hidden');
+    autoPrintFiltersModal.setAttribute('aria-hidden', 'true');
+}
+
+function setupAutoPrintFiltersModal() {
+    if (openAutoPrintFiltersBtn) {
+        openAutoPrintFiltersBtn.addEventListener('click', async () => {
+            await loadAutoPrintFilters();
+            openAutoPrintFiltersModal();
+        });
+    }
+
+    autoPrintFiltersModal?.addEventListener('click', (event) => {
+        if (event.target === autoPrintFiltersModal) {
+            closeAutoPrintFiltersModal();
+        }
+    });
+
+    document.querySelectorAll('[data-close-modal="auto-print-filters-modal"]').forEach((el) => {
+        el.addEventListener('click', closeAutoPrintFiltersModal);
+    });
+}
+
 function setupConfigDrawers() {
     if (openPrintConfigBtn) {
         openPrintConfigBtn.addEventListener('click', async () => {
@@ -1598,13 +1698,17 @@ function setupConfigDrawers() {
     });
 
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') closeAllConfigDrawers();
+        if (e.key === 'Escape') {
+            closeAllConfigDrawers();
+            closeAutoPrintFiltersModal();
+        }
     });
 }
 
 // Setup event listeners
 function setupEventListeners() {
     setupConfigDrawers();
+    setupAutoPrintFiltersModal();
 
     // Pairing (login screen)
     pairLoginBtn.addEventListener('click', handlePairLogin);
@@ -1692,6 +1796,9 @@ function setupEventListeners() {
 
     // Auto-print toggle
     autoPrintToggle.addEventListener('change', handleAutoPrintToggle);
+    getAutoPrintFilterInputs().forEach(({ input }) => {
+        input.addEventListener('change', handleAutoPrintFiltersChange);
+    });
 
     if (clearAllOrdersBtn) {
         clearAllOrdersBtn.addEventListener('click', handleClearAllOrders);
@@ -1845,10 +1952,16 @@ async function handleAutoPrintToggle() {
     try {
         const enabled = autoPrintToggle.checked;
         await window.electronAPI.toggleAutoPrint(enabled);
+        if (enabled) {
+            const result = await window.electronAPI.setAutoPrintFilters(DEFAULT_AUTO_PRINT_FILTERS);
+            applyAutoPrintFiltersToUI(result?.filters || DEFAULT_AUTO_PRINT_FILTERS);
+        }
+        updateAutoPrintGearState();
         showStatus(`Impressão automática ${enabled ? 'ativada' : 'desativada'}`, 'success');
     } catch (error) {
         showStatus(`Erro ao alterar configuração: ${error.message}`, 'error');
-        autoPrintToggle.checked = !autoPrintToggle.checked; // Revert
+        autoPrintToggle.checked = !autoPrintToggle.checked;
+        updateAutoPrintGearState();
     }
 }
 

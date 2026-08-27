@@ -69,12 +69,24 @@
                                 </button>
                             </div>
 
-                            <div class="setting-item setting-item-compact">
+                            <div class="setting-item setting-item-compact auto-print-row">
                                 <label class="toggle-switch">
                                     <input type="checkbox" id="auto-print-toggle">
                                     <span class="slider"></span>
                                 </label>
-                                <span>Automática</span>
+                                <span class="auto-print-label">Automática</span>
+                                <button
+                                    id="open-auto-print-filters-btn"
+                                    class="btn-gear"
+                                    type="button"
+                                    title="Configurar tipos de impressão automática"
+                                    aria-label="Configurar tipos de impressão automática"
+                                >
+                                    <svg class="btn-gear-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/>
+                                        <path d="M19.43 12.97c.04-.32.07-.64.07-.97s-.03-.66-.07-.97l2.11-1.65a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.49 1a7.03 7.03 0 0 0-1.68-.97l-.38-2.65A.5.5 0 0 0 14 2h-4a.5.5 0 0 0-.49.42l-.38 2.65c-.6.24-1.17.56-1.68.97l-2.49-1a.5.5 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64l2.11 1.65c-.04.32-.07.65-.07.97s.03.65.07.97l-2.11 1.65a.5.5 0 0 0-.12.64l2 3.46a.5.5 0 0 0 .6.22l2.49-1c.51.41 1.08.73 1.68.97l.38 2.65A.5.5 0 0 0 10 22h4a.5.5 0 0 0 .49-.42l.38-2.65c.6-.24 1.17-.56 1.68-.97l2.49 1a.5.5 0 0 0 .6-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.11-1.65Z"/>
+                                    </svg>
+                                </button>
                             </div>
 
                             <div class="basic-field">
@@ -324,6 +336,37 @@
                 <p class="settings-help">Ao abrir a aba Balança o app tenta conectar automaticamente. A impressora do cupom de peso fica na área de impressão da pesagem.</p>
             </div>
         </aside>
+    </div>
+
+    <!-- Filtros de impressão automática -->
+    <div id="auto-print-filters-modal" class="modal hidden" aria-hidden="true">
+        <div class="modal-content modal-content-compact">
+            <div class="modal-header">
+                <h3>Impressão automática</h3>
+                <button type="button" class="close-btn" data-close-modal="auto-print-filters-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="settings-help">Escolha quais tipos de pedido imprimem automaticamente quando a opção estiver ativa.</p>
+                <div class="auto-print-filters-grid">
+                    <label class="auto-print-filter-item">
+                        <input type="checkbox" id="auto-print-filter-table" checked>
+                        <span>Mesas e comandas</span>
+                    </label>
+                    <label class="auto-print-filter-item">
+                        <input type="checkbox" id="auto-print-filter-pickup" checked>
+                        <span>Retirada</span>
+                    </label>
+                    <label class="auto-print-filter-item">
+                        <input type="checkbox" id="auto-print-filter-delivery" checked>
+                        <span>Delivery</span>
+                    </label>
+                    <label class="auto-print-filter-item">
+                        <input type="checkbox" id="auto-print-filter-marketplace" checked>
+                        <span>Marketplaces (Pede.ai, iFood, etc.)</span>
+                    </label>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Order Modal -->

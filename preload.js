@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Auto-print settings
   toggleAutoPrint: (enabled) => ipcRenderer.invoke('toggle-auto-print', enabled),
   getAutoPrintStatus: () => ipcRenderer.invoke('get-auto-print-status'),
+  getAutoPrintFilters: () => ipcRenderer.invoke('get-auto-print-filters'),
+  setAutoPrintFilters: (filters) => ipcRenderer.invoke('set-auto-print-filters', filters),
 
   // Printer selection
   listPrinters: () => ipcRenderer.invoke('list-printers'),

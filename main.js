@@ -26,6 +26,11 @@ const {
   resolvePrintOptionsForPrinter,
   filterJobsForAutoPrint,
 } = require('./printerRouting');
+const {
+  normalizeAutoPrintFilters,
+  shouldAutoPrintOrder,
+  DEFAULT_AUTO_PRINT_FILTERS,
+} = require('./autoPrintFilters');
 
 // Configurações para resolver problemas no Windows
 app.disableHardwareAcceleration();
@@ -64,6 +69,17 @@ let mainWindow;
 let ws = null;
 let printerProcess = null;
 let isAutoPrintEnabled = store.get('autoPrintEnabled', false);
+let autoPrintFilters = normalizeAutoPrintFilters(store.get('autoPrintFilters', DEFAULT_AUTO_PRINT_FILTERS));
+
+function getAutoPrintFilters() {
+  return normalizeAutoPrintFilters(autoPrintFilters);
+}
+
+function persistAutoPrintFilters(filters) {
+  autoPrintFilters = normalizeAutoPrintFilters(filters);
+  store.set('autoPrintFilters', autoPrintFilters);
+  return autoPrintFilters;
+}
 let deviceToken = store.get('deviceToken', null);
 let deviceId = store.get('deviceId', null);
 let companyId = store.get('companyId', null);
@@ -292,36 +308,76 @@ async function printFiscalDocument(payload = {}) {
 function getThermalPrintConfig(preferredPaperWidth) {
   const resolved = preferredPaperWidth === '80mm' ? '80mm' : '58mm';
   const is80 = resolved === '80mm';
+  // Mesma largura em dots dos pedidos (printer.py obter_largura_imagem).
+  const windowPx = is80 ? 576 : 384;
   return {
     paperWidth: resolved,
     widthMicrons: is80 ? 80000 : 58000,
-    windowPx: is80 ? 576 : 384,
-    cssWidth: resolved,
+    windowPx,
+    cssWidth: `${windowPx}px`,
   };
 }
 
 function wrapFiscalHtmlForThermal(html, preferredPaperWidth) {
   const cfg = getThermalPrintConfig(preferredPaperWidth);
+  // Tipografia próxima dos pedidos (font_scale alto). QR limitado para não “comer” a bobina.
   const thermalStyle = `
 <style id="linkeats-fiscal-thermal">
-  @page { size: ${cfg.cssWidth} auto; margin: 0; }
+  @page { size: ${cfg.paperWidth} auto; margin: 0; }
   html, body {
     margin: 0 !important;
-    padding: 0 !important;
+    padding: 0 8px !important;
+    box-sizing: border-box !important;
     width: ${cfg.cssWidth} !important;
     max-width: ${cfg.cssWidth} !important;
     background: #fff !important;
+    color: #000 !important;
+    font-family: Arial, Helvetica, sans-serif !important;
+    font-size: 20px !important;
+    line-height: 1.28 !important;
+    border: none !important;
+    outline: none !important;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
+  }
+  body, body *:not(img):not(svg):not(canvas):not(path) {
+    font-family: Arial, Helvetica, sans-serif !important;
+    font-size: 20px !important;
+    line-height: 1.28 !important;
+    color: #000 !important;
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+  }
+  b, strong, h1, h2, h3, thead, th, .titulo, .title, .total, .totais {
+    font-size: 22px !important;
+    font-weight: 700 !important;
+  }
+  small, .tiny, .min, .obs, .observacao {
+    font-size: 16px !important;
   }
   body > * {
     width: 100% !important;
     max-width: ${cfg.cssWidth} !important;
     box-sizing: border-box !important;
   }
-  table, img, svg, canvas {
+  table {
+    width: 100% !important;
     max-width: 100% !important;
+    border-collapse: collapse !important;
+    border: none !important;
+  }
+  td, th {
+    font-size: 20px !important;
+    padding: 2px 0 !important;
+    border: none !important;
+  }
+  img, svg, canvas {
+    max-width: 240px !important;
+    width: auto !important;
     height: auto !important;
+    display: block !important;
+    margin: 8px auto !important;
   }
 </style>`;
 
@@ -336,6 +392,82 @@ function wrapFiscalHtmlForThermal(html, preferredPaperWidth) {
   }
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8">${thermalStyle}</head><body>${trimmed}</body></html>`;
+}
+
+async function boostFiscalDomForThermal(webContents, cfg, isPdf) {
+  if (isPdf) {
+    // PDF embutido: amplia a página; o recorte no Python encaixa na bobina.
+    try {
+      webContents.setZoomFactor(cfg.paperWidth === '80mm' ? 1.7 : 2.1);
+    } catch (error) {
+      console.warn('Fiscal PDF zoom failed:', error.message);
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 300));
+    return;
+  }
+
+  try {
+    await webContents.executeJavaScript(`
+(() => {
+  const root = document.body || document.documentElement;
+  if (!root) return false;
+
+  document.querySelectorAll('[style]').forEach((el) => {
+    try {
+      el.style.removeProperty('font-size');
+      el.style.removeProperty('font');
+      el.style.removeProperty('line-height');
+      el.style.removeProperty('transform');
+      el.style.removeProperty('zoom');
+      if (el.style.fontSize) el.style.fontSize = '';
+    } catch {}
+  });
+  document.querySelectorAll('font[size]').forEach((el) => el.removeAttribute('size'));
+  document.querySelectorAll('[face]').forEach((el) => el.removeAttribute('face'));
+
+  document.querySelectorAll('img, canvas, svg').forEach((el) => {
+    try {
+      el.style.maxWidth = '240px';
+      el.style.width = 'auto';
+      el.style.height = 'auto';
+      el.style.display = 'block';
+      el.style.margin = '8px auto';
+      el.removeAttribute('width');
+      el.removeAttribute('height');
+    } catch {}
+  });
+
+  const style = document.createElement('style');
+  style.id = 'linkeats-fiscal-boost';
+  style.textContent = \`
+    html, body, body *:not(img):not(svg):not(canvas):not(path) {
+      font-family: Arial, Helvetica, sans-serif !important;
+      font-size: 20px !important;
+      line-height: 1.28 !important;
+      border: none !important;
+      outline: none !important;
+      box-shadow: none !important;
+    }
+    b, strong, h1, h2, h3, th {
+      font-size: 22px !important;
+    }
+    table, td, th {
+      border: none !important;
+    }
+    img, svg, canvas {
+      max-width: 240px !important;
+      width: auto !important;
+      height: auto !important;
+    }
+  \`;
+  (document.head || document.documentElement).appendChild(style);
+  return true;
+})();
+    `, true);
+  } catch (error) {
+    console.warn('Fiscal DOM boost failed:', error.message);
+  }
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, 150));
 }
 
 async function sendRasterImageToPrinter(pngBuffer, printerName, title, cfg) {
@@ -370,9 +502,9 @@ async function sendRasterImageToPrinter(pngBuffer, printerName, title, cfg) {
   const imgHtmlPath = path.join(app.getPath('temp'), `fiscal-img-${Date.now()}.html`);
   const imgHtml = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
-  @page { size: ${cfg.cssWidth} auto; margin: 0; }
+  @page { size: ${cfg.paperWidth} auto; margin: 0; }
   html, body { margin: 0; padding: 0; width: ${cfg.cssWidth}; background: #fff; }
-  img { width: 100%; height: auto; display: block; }
+  img { width: 100%; max-width: ${cfg.cssWidth}; height: auto; display: block; }
 </style></head>
 <body><img src="data:image/png;base64,${pngBase64}" alt="Cupom fiscal" /></body></html>`;
   fs.writeFileSync(imgHtmlPath, imgHtml, 'utf-8');
@@ -431,12 +563,15 @@ async function rasterizeFiscalDocument(url, cfg, isPdf) {
     show: false,
     width: cfg.windowPx,
     height: 1600,
+    useContentSize: true,
+    backgroundColor: '#ffffff',
     webPreferences: { sandbox: true },
   });
 
   try {
     await win.loadURL(url);
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, isPdf ? 1000 : 300));
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, isPdf ? 1200 : 350));
+    await boostFiscalDomForThermal(win.webContents, cfg, isPdf);
 
     const contentHeight = await win.webContents.executeJavaScript(`
       Math.max(
@@ -448,7 +583,7 @@ async function rasterizeFiscalDocument(url, cfg, isPdf) {
 
     const targetHeight = Math.min(Math.max(Math.round(Number(contentHeight) || 800), 400), 12000);
     win.setContentSize(cfg.windowPx, targetHeight);
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 200));
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
 
     const image = await win.webContents.capturePage();
     return image.toPNG();
@@ -547,7 +682,9 @@ function printFileWithHiddenWindow(url, printerName, title, onDone, options = {}
 
 async function handlePrintFiscalEvent(payload) {
   try {
-    console.log('🧾 Print fiscal event received:', payload?.id || payload?.title);
+    const looksPdf = String(payload?.mimeType || '').toLowerCase().includes('pdf')
+      || String(payload?.base64 || '').replace(/\s/g, '').startsWith('JVBERi0');
+    console.log('🧾 Print fiscal event received:', payload?.id || payload?.title, looksPdf ? '(pdf)' : '(html)');
     const result = await printFiscalDocument(payload);
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('print-result', {
@@ -778,6 +915,9 @@ function sendPrinterCommand(command) {
     let responseData = '';
     let settled = false;
     let timeout = null;
+    const action = String(command?.action || '');
+    // Cupom fiscal / bitmaps altos podem demorar mais que o timeout curto dos pedidos.
+    const timeoutMs = (action === 'print_image' || action === 'print') ? 60000 : 15000;
 
     const cleanup = () => {
       if (timeout) clearTimeout(timeout);
@@ -793,14 +933,35 @@ function sendPrinterCommand(command) {
       fn(arg);
     };
 
-    const dataHandler = (data) => {
-      responseData += data.toString();
-      try {
-        const response = JSON.parse(responseData.trim());
-        finish(resolve, response);
-      } catch (e) {
-        // Ainda não recebeu JSON completo
+    const tryParseResponse = (chunk) => {
+      responseData += chunk;
+      const lines = responseData.split(/\r?\n/);
+      responseData = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('{')) continue;
+        try {
+          return JSON.parse(trimmed);
+        } catch {
+          // linha incompleta ou log misturado
+        }
       }
+      const leftover = responseData.trim();
+      if (leftover.startsWith('{') && leftover.endsWith('}')) {
+        try {
+          const parsed = JSON.parse(leftover);
+          responseData = '';
+          return parsed;
+        } catch {
+          // ainda incompleto
+        }
+      }
+      return null;
+    };
+
+    const dataHandler = (data) => {
+      const response = tryParseResponse(data.toString());
+      if (response) finish(resolve, response);
     };
 
     const onClose = () => {
@@ -817,7 +978,7 @@ function sendPrinterCommand(command) {
 
     timeout = setTimeout(() => {
       finish(reject, new Error('Printer command timeout'));
-    }, 10000);
+    }, timeoutMs);
 
     proc.stdout.on('data', dataHandler);
     proc.once('close', onClose);
@@ -842,6 +1003,13 @@ async function printOrder(order, options = {}) {
     : splitOrderPrintJobs(order, routing, defaults);
 
   if (auto) {
+    if (!shouldAutoPrintOrder(order, getAutoPrintFilters())) {
+      return {
+        success: true,
+        mode: 'skipped',
+        message: 'Pedido não corresponde aos filtros de impressão automática',
+      };
+    }
     jobs = filterJobsForAutoPrint(jobs, routing, isAutoPrintEnabled);
     if (!jobs.length) {
       return {
@@ -1057,6 +1225,8 @@ function connectWebSocket() {
         }
         if (!isAutoPrintEnabled && !(getPrinterRouting().routes || []).some((route) => route.autoPrint)) {
           console.log('⚠️ Auto-print disabled — skipping automatic print for:', orderId);
+        } else if (!shouldAutoPrintOrder(data.payload, getAutoPrintFilters())) {
+          console.log('⚠️ Auto-print filter skipped order:', orderId);
         } else if (orderId && recentlyPrinted.has(orderId)) {
           // Deduplication: ignore if same order printed in last 3 seconds
           console.log('⚠️ Duplicate print-order ignored:', orderId);
@@ -1075,6 +1245,8 @@ function connectWebSocket() {
         }
         if (!isAutoPrintEnabled && !(getPrinterRouting().routes || []).some((route) => route.autoPrint)) {
           console.log('⚠️ Auto-print disabled — skipping automatic tab print for:', tabPrintId);
+        } else if (!shouldAutoPrintOrder(data.payload, getAutoPrintFilters())) {
+          console.log('⚠️ Auto-print filter skipped tab print:', tabPrintId);
         } else {
           printOrder(data.payload, { auto: true }).then((result) => {
             if (mainWindow && !mainWindow.isDestroyed()) {
@@ -1238,6 +1410,14 @@ ipcMain.handle('toggle-auto-print', (event, enabled) => {
 
 ipcMain.handle('get-auto-print-status', () => {
   return isAutoPrintEnabled;
+});
+
+ipcMain.handle('get-auto-print-filters', () => {
+  return getAutoPrintFilters();
+});
+
+ipcMain.handle('set-auto-print-filters', (event, filters) => {
+  return { success: true, filters: persistAutoPrintFilters(filters) };
 });
 
 ipcMain.handle('list-printers', async () => {

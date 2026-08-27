@@ -395,6 +395,89 @@ button:disabled {
     background: #fafbfc;
 }
 
+.auto-print-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.auto-print-row .toggle-switch {
+    flex-shrink: 0;
+}
+
+.auto-print-label {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 500;
+    color: #0f172a;
+}
+
+.btn-gear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: #94a3b8;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+.btn-gear-icon {
+    width: 17px;
+    height: 17px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.75;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.btn-gear:hover:not(:disabled) {
+    color: #475569;
+    background: #eef2f6;
+}
+
+.btn-gear:active:not(:disabled) {
+    transform: scale(0.94);
+}
+
+.btn-gear:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.auto-print-filters-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 4px;
+}
+
+.auto-print-filter-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    font-size: 13px;
+    line-height: 1.4;
+    color: #0f172a;
+    cursor: pointer;
+}
+
+.auto-print-filter-item input {
+    margin-top: 3px;
+    flex-shrink: 0;
+}
+
+.modal-content-compact {
+    width: min(360px, calc(100vw - 32px));
+}
+
 .basic-field {
     display: flex;
     flex-direction: column;

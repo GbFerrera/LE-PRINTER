@@ -463,6 +463,51 @@ def _largura_max_imagem(paper_width='58mm'):
     return 576 if str(paper_width).lower() == '80mm' else 384
 
 
+def _recortar_conteudo_termico(img, limiar=246, padding=4):
+    """Remove bordas brancas do raster (DANFE/PDF costuma vir com folga → impressão miúda)."""
+    if not HAS_PIL:
+        return img
+    gray = img.convert('L') if img.mode != 'L' else img
+    mask = gray.point(lambda p: 255 if p < limiar else 0, '1')
+    bbox = mask.getbbox()
+    if not bbox:
+        return img
+    left, top, right, bottom = bbox
+    pad = max(0, int(padding))
+    left = max(0, left - pad)
+    top = max(0, top - pad)
+    right = min(gray.width, right + pad)
+    bottom = min(gray.height, bottom + pad)
+    if right - left < 24 or bottom - top < 24:
+        return img
+    return img.crop((left, top, right, bottom))
+
+
+def _aplicar_margem_lateral(img, paper_width='58mm', margem_px=None):
+    """Deixa folga nas laterais — POS58 corta ~5px da área útil em 58mm."""
+    if not HAS_PIL:
+        return img
+    if margem_px is None:
+        margem_px = 8 if str(paper_width).lower() != '80mm' else 4
+    margem_px = max(0, int(margem_px))
+    if margem_px <= 0:
+        return img
+
+    max_w = _largura_max_imagem(paper_width)
+    max_w = max_w - (max_w % 8)
+    content_w = max(64, max_w - (margem_px * 2))
+    content_w = content_w - (content_w % 8)
+    img = _preparar_imagem_impressao(img, paper_width, target_width=content_w)
+    if img.width >= max_w:
+        return img
+    left = max(0, (max_w - img.width) // 2)
+    # Usa L/255 (branco real). Em mode '1', fill=1 às vezes vira borda preta no GDI/POS58.
+    base = img.convert('L')
+    canvas = Image.new('L', (max_w, base.height), 255)
+    canvas.paste(base, (left, 0))
+    return canvas
+
+
 def _preparar_imagem_impressao(img, paper_width='58mm', target_width=None):
     """Normaliza imagem 1-bit na largura correta do papel (evita overflow → lixo)."""
     max_w = int(target_width) if target_width else _largura_max_imagem(paper_width)
@@ -633,6 +678,7 @@ def imprimir_imagem_gdi(img, impressora_nome, paper_width='58mm', max_slice=None
         page_h = int(gdi32.GetDeviceCaps(hdc, win32con.VERTRES) or 0)
         print(
             f'GDI caps paper={paper_width} HORZRES={page_w} VERTRES={page_h} expected_w={expected_w}',
+            file=sys.stderr,
             flush=True,
         )
 
@@ -644,7 +690,7 @@ def imprimir_imagem_gdi(img, impressora_nome, paper_width='58mm', max_slice=None
             and page_h <= int(expected_w * 1.35)
         )
         if landscape_dc:
-            print('GDI landscape detectado — rotacionando bitmap 90°', flush=True)
+            print('GDI landscape detectado — rotacionando bitmap 90°', file=sys.stderr, flush=True)
             img_mono = img_mono.transpose(Image.ROTATE_90)
 
         if max_slice is None:
@@ -1050,6 +1096,9 @@ def processar_comando(comando):
             paper_efetivo = detectar_paper_width_dispositivo(impressora, preferido)
             escala = normalizar_escala_fonte(font_size)
             max_slice = 2400 if escala >= 6 else None
+            # NFC-e/PDF: recorta folga, encaixa na bobina e deixa margem lateral (POS58 corta a borda).
+            img = _recortar_conteudo_termico(img)
+            img = _aplicar_margem_lateral(img, paper_efetivo)
 
             try:
                 if HAS_IMAGEWIN and HAS_WIN32GUI:
