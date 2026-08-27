@@ -865,6 +865,28 @@ function buildCashDrawerOrderChannelStats(payments) {
   return stats;
 }
 
+function getLastReceiptPayment(payments) {
+  const filtered = (payments || []).filter(
+    (payment) => !String(payment.method || '').startsWith('movimento_saida')
+  );
+  if (!filtered.length) return null;
+  return [...filtered].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  )[0];
+}
+
+function formatOptionalPlusMoney(value) {
+  const num = Number(value) || 0;
+  if (num === 0) return '—';
+  return `+ ${formatMoneyBR(num)}`;
+}
+
+function formatOptionalMinusMoney(value) {
+  const num = Number(value) || 0;
+  if (num === 0) return '—';
+  return `- ${formatMoneyBR(num)}`;
+}
+
 function buildCashDrawerReceipt(detail, companyName, options = {}) {
   const receiptWidth = getReceiptWidth(options.paperWidth);
   const doc = createStyledReceipt(options);
@@ -874,80 +896,64 @@ function buildCashDrawerReceipt(detail, companyName, options = {}) {
 
   doc.push(`ESTABELECIMENTO: ${empresa}`, 'title');
   doc.push(formatSection('Relatorio de Gaveta', receiptWidth), 'bold');
-  doc.push(`Operador: ${drawer.OpenedBy?.name || '-'}`);
-  doc.push(`Status: ${drawer.status === 'open' ? 'Aberta' : 'Fechada'}`);
-  doc.push(`Abertura (X): ${formatMoneyBR(drawer.initial_cash)}`);
-  if (drawer.opened_at) doc.push(`Aberta em: ${formatDateTimeBR(drawer.opened_at)}`);
-  if (drawer.final_cash != null) doc.push(`Fechamento (Z): ${formatMoneyBR(drawer.final_cash)}`);
-  if (drawer.closed_at) doc.push(`Fechada em: ${formatDateTimeBR(drawer.closed_at)}`);
-  doc.push(`Saldo esperado: ${formatMoneyBR(detail?.expected_total)}`);
-  if (detail?.difference != null) doc.push(`Diferenca: ${formatMoneyBR(detail.difference)}`);
-  doc.push(`Liquido movimentado: ${formatMoneyBR(detail?.total_payments)}`);
   doc.push('');
 
-  doc.push(formatSection('Resumo', receiptWidth), 'bold');
-  doc.push(padLine('Entradas', formatMoneyBR(detail?.total_in), receiptWidth));
-  doc.push(padLine('Taxas', formatMoneyBR(detail?.total_fees), receiptWidth));
-  doc.push(padLine('Descontos', formatMoneyBR(detail?.total_discount), receiptWidth));
-  doc.push(padLine('Saidas', formatMoneyBR(detail?.total_out), receiptWidth));
-  doc.push('');
-
-  const byMethod = detail?.by_method || {};
-  const methodKeys = Object.keys(byMethod);
-  if (methodKeys.length > 0) {
-    doc.push(formatSection('Totais por forma', receiptWidth), 'bold');
-    methodKeys.forEach((method) => {
-      const label = getCashDrawerMethodLabel(method.split(':')[0]);
-      const isExit = method.startsWith('movimento_saida');
-      const amount = Number(byMethod[method]) || 0;
-      const display = isExit
-        ? `- ${formatMoneyBR(Math.abs(amount))}`
-        : formatMoneyBR(amount);
-      doc.push(padLine(label, display, receiptWidth));
-    });
-    doc.push('');
+  if (drawer.opened_at) {
+    doc.push(padLine('Data', formatDateTimeBR(drawer.opened_at), receiptWidth));
   }
+  doc.push(padLine('Abertura (X)', formatMoneyBR(drawer.initial_cash), receiptWidth));
+  doc.push(
+    padLine(
+      'Fechamento (Z)',
+      drawer.final_cash != null ? formatMoneyBR(drawer.final_cash) : '-',
+      receiptWidth
+    )
+  );
+  doc.push(padLine('Status', drawer.status === 'open' ? 'Aberta' : 'Fechada', receiptWidth));
+  doc.push(padLine('Entradas', `+ ${formatMoneyBR(detail?.total_in)}`, receiptWidth));
+  doc.push(padLine('Taxas', formatOptionalPlusMoney(detail?.total_fees), receiptWidth));
+  doc.push(padLine('Descontos', formatOptionalMinusMoney(detail?.total_discount), receiptWidth));
+  doc.push(padLine('Saidas', `- ${formatMoneyBR(detail?.total_out)}`, receiptWidth));
+  doc.push(padLine('Liquido', formatMoneyBR(detail?.total_payments), receiptWidth));
+
+  doc.push('');
+  doc.push(formatSection('Ultimo recebimento', receiptWidth), 'bold');
+  const lastPayment = getLastReceiptPayment(payments);
+  if (lastPayment) {
+    doc.push(getCashDrawerOrderLabel(lastPayment));
+    doc.push(`+ ${formatMoneyBR(lastPayment.amount)}`);
+    doc.push(getCashDrawerMethodLabel(String(lastPayment.method || '').split(':')[0]));
+  } else {
+    doc.push('—');
+  }
+
+  doc.push('');
+  doc.push(padLine('Operador', drawer.OpenedBy?.name || '-', receiptWidth));
 
   const channelStats = buildCashDrawerOrderChannelStats(payments);
-  if (channelStats.totalOrders > 0 || channelStats.totalAmount > 0) {
+  if (channelStats.totalOrders > 0) {
+    doc.push('');
     doc.push(formatSection('Pedidos por canal', receiptWidth), 'bold');
     const channelRows = [
-      ['Delivery', channelStats.delivery],
-      ['Retirada', channelStats.pickup],
-      ['Mesas', channelStats.table],
-      ['Marketplaces', channelStats.marketplace],
+      ['Delivery', channelStats.delivery.orders],
+      ['Retirada', channelStats.pickup.orders],
+      ['Mesas', channelStats.table.orders],
+      ['Marketplaces', channelStats.marketplace.orders],
     ];
-    channelRows.forEach(([label, bucket]) => {
-      if (bucket.orders > 0 || bucket.total > 0) {
-        doc.push(padLine(label, `${bucket.orders} · ${formatMoneyBR(bucket.total)}`, receiptWidth));
-      }
+    channelRows.forEach(([label, qty]) => {
+      if (qty > 0) doc.push(padLine(label, String(qty), receiptWidth));
     });
     Object.entries(channelStats.marketplaceByPlatform)
-      .sort((a, b) => b[1].total - a[1].total)
+      .sort((a, b) => b[1].orders - a[1].orders)
       .forEach(([platform, bucket]) => {
-        doc.push(padLine(`  ${platform}`, `${bucket.orders} · ${formatMoneyBR(bucket.total)}`, receiptWidth));
+        if (bucket.orders > 0) {
+          doc.push(padLine(`  ${platform}`, String(bucket.orders), receiptWidth));
+        }
       });
-    if (channelStats.other.orders > 0 || channelStats.other.total > 0) {
-      doc.push(padLine('Outros', `${channelStats.other.orders} · ${formatMoneyBR(channelStats.other.total)}`, receiptWidth));
+    if (channelStats.other.orders > 0) {
+      doc.push(padLine('Outros', String(channelStats.other.orders), receiptWidth));
     }
-    doc.push(padLine('Total', `${channelStats.totalOrders} · ${formatMoneyBR(channelStats.totalAmount)}`, receiptWidth));
-    doc.push('');
-  }
-
-  doc.push(formatSection('Movimentacoes', receiptWidth), 'bold');
-  const MAX_PAYMENTS = 40;
-  const sorted = [...payments].sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-  );
-  sorted.slice(0, MAX_PAYMENTS).forEach((payment) => {
-    doc.push(formatDateTimeBR(payment.created_at));
-    doc.push(padLine(getCashDrawerOrderLabel(payment), formatMoneyBR(payment.amount), receiptWidth));
-    const method = getCashDrawerMethodLabel(String(payment.method || '').split(':')[0]);
-    const customer = payment.customer_name ? ` · ${payment.customer_name}` : '';
-    doc.push(`  ${method}${customer}`);
-  });
-  if (sorted.length > MAX_PAYMENTS) {
-    doc.push(`... e mais ${sorted.length - MAX_PAYMENTS} movimentacoes`);
+    doc.push(padLine('Total', String(channelStats.totalOrders), receiptWidth));
   }
 
   doc.push('');
