@@ -741,14 +741,239 @@ function formatFontSampleText(scale, paperWidth = '58mm', options = {}) {
   return documentToPlainText(buildFontSampleReceipt(scale, paperWidth, options));
 }
 
+function getCashDrawerMethodLabel(method) {
+  const raw = String(method || '');
+  if (raw.startsWith('movimento_')) {
+    const base = raw.split(':')[0];
+    const map = {
+      movimento_entrada: 'Entrada Manual',
+      movimento_saida: 'Saida Manual',
+    };
+    return map[base] || base.replace(/_/g, ' ');
+  }
+
+  const key = raw.trim().toLowerCase();
+  const map = {
+    pix: 'Pix',
+    dinheiro: 'Dinheiro',
+    debito: 'Cartao Debito',
+    credito: 'Cartao Credito',
+    cartao_credito: 'Cartao Credito',
+    cartao_debito: 'Cartao Debito',
+    visa_credito: 'Visa Credito',
+    visa_debito: 'Visa Debito',
+    mastercard_credito: 'MasterCard Credito',
+    mastercard_debito: 'MasterCard Debito',
+    hipercard_credito: 'Hipercard Credito',
+    elo_credito: 'Elo Credito',
+    elo_debito: 'Elo Debito',
+    sodexo_refeicao: 'Sodexo Refeicao',
+    ticket: 'Ticket',
+    picpay: 'PicPay',
+    alelo_refeicao: 'Alelo Refeicao',
+    alelo_alimentacao: 'Alelo Alimentacao',
+    app: 'Pago no App',
+    pedeai: 'Pede.ai',
+    nao_informado: 'Nao Informado',
+    money: 'Dinheiro',
+    cash: 'Dinheiro',
+    card: 'Cartao',
+    credit_card: 'Cartao Credito',
+    debit_card: 'Cartao Debito',
+    online: 'Pagamento online',
+  };
+  return map[key] || getPaymentMethodText(raw) || raw.replace(/_/g, ' ');
+}
+
+function getCashDrawerOrderLabel(payment) {
+  if (payment?.external_order_id) {
+    const platform = payment.external_platform === 'pedeai'
+      ? 'Pede.ai'
+      : (payment.external_platform || 'Externo');
+    const ref = payment.external_order_label || String(payment.external_order_id).slice(0, 8);
+    return `${platform} #${ref}`;
+  }
+  if (payment?.order_id) return `Pedido #${String(payment.order_id).slice(0, 6)}`;
+  return 'Sem pedido';
+}
+
+function buildCashDrawerOrderChannelStats(payments) {
+  const seenLocalOrders = new Set();
+  const seenExternalOrders = new Set();
+  const emptyBucket = () => ({ orders: 0, total: 0 });
+  const stats = {
+    delivery: emptyBucket(),
+    pickup: emptyBucket(),
+    table: emptyBucket(),
+    marketplace: emptyBucket(),
+    marketplaceByPlatform: {},
+    other: emptyBucket(),
+    totalOrders: 0,
+    totalAmount: 0,
+  };
+
+  const addToBucket = (bucket, amount, countOrder) => {
+    bucket.total += amount;
+    if (countOrder) bucket.orders += 1;
+  };
+
+  (payments || []).forEach((payment) => {
+    if (String(payment.method || '').startsWith('movimento_')) return;
+
+    const amount = Number(payment.amount) || 0;
+
+    if (payment.external_order_id) {
+      const key = payment.external_order_id;
+      const countOrder = !seenExternalOrders.has(key);
+      if (countOrder) seenExternalOrders.add(key);
+      addToBucket(stats.marketplace, amount, countOrder);
+      const label = payment.external_platform === 'pedeai'
+        ? 'Pede.ai'
+        : (payment.external_platform || 'Marketplace');
+      if (!stats.marketplaceByPlatform[label]) stats.marketplaceByPlatform[label] = emptyBucket();
+      addToBucket(stats.marketplaceByPlatform[label], amount, countOrder);
+      return;
+    }
+
+    if (!payment.order_id) {
+      addToBucket(stats.other, amount, true);
+      return;
+    }
+
+    const countOrder = !seenLocalOrders.has(payment.order_id);
+    if (countOrder) seenLocalOrders.add(payment.order_id);
+
+    if (payment.order_type === 'delivery') addToBucket(stats.delivery, amount, countOrder);
+    else if (payment.order_type === 'pickup') addToBucket(stats.pickup, amount, countOrder);
+    else if (payment.order_type === 'table') addToBucket(stats.table, amount, countOrder);
+    else addToBucket(stats.other, amount, countOrder);
+  });
+
+  stats.totalOrders =
+    stats.delivery.orders +
+    stats.pickup.orders +
+    stats.table.orders +
+    stats.marketplace.orders +
+    stats.other.orders;
+  stats.totalAmount =
+    stats.delivery.total +
+    stats.pickup.total +
+    stats.table.total +
+    stats.marketplace.total +
+    stats.other.total;
+
+  return stats;
+}
+
+function buildCashDrawerReceipt(detail, companyName, options = {}) {
+  const receiptWidth = getReceiptWidth(options.paperWidth);
+  const doc = createStyledReceipt(options);
+  const empresa = companyName || 'LINK EATS';
+  const drawer = detail?.drawer || {};
+  const payments = Array.isArray(detail?.payments) ? detail.payments : [];
+
+  doc.push(`ESTABELECIMENTO: ${empresa}`, 'title');
+  doc.push(formatSection('Relatorio de Gaveta', receiptWidth), 'bold');
+  doc.push(`Operador: ${drawer.OpenedBy?.name || '-'}`);
+  doc.push(`Status: ${drawer.status === 'open' ? 'Aberta' : 'Fechada'}`);
+  doc.push(`Abertura (X): ${formatMoneyBR(drawer.initial_cash)}`);
+  if (drawer.opened_at) doc.push(`Aberta em: ${formatDateTimeBR(drawer.opened_at)}`);
+  if (drawer.final_cash != null) doc.push(`Fechamento (Z): ${formatMoneyBR(drawer.final_cash)}`);
+  if (drawer.closed_at) doc.push(`Fechada em: ${formatDateTimeBR(drawer.closed_at)}`);
+  doc.push(`Saldo esperado: ${formatMoneyBR(detail?.expected_total)}`);
+  if (detail?.difference != null) doc.push(`Diferenca: ${formatMoneyBR(detail.difference)}`);
+  doc.push(`Liquido movimentado: ${formatMoneyBR(detail?.total_payments)}`);
+  doc.push('');
+
+  doc.push(formatSection('Resumo', receiptWidth), 'bold');
+  doc.push(padLine('Entradas', formatMoneyBR(detail?.total_in), receiptWidth));
+  doc.push(padLine('Taxas', formatMoneyBR(detail?.total_fees), receiptWidth));
+  doc.push(padLine('Descontos', formatMoneyBR(detail?.total_discount), receiptWidth));
+  doc.push(padLine('Saidas', formatMoneyBR(detail?.total_out), receiptWidth));
+  doc.push('');
+
+  const byMethod = detail?.by_method || {};
+  const methodKeys = Object.keys(byMethod);
+  if (methodKeys.length > 0) {
+    doc.push(formatSection('Totais por forma', receiptWidth), 'bold');
+    methodKeys.forEach((method) => {
+      const label = getCashDrawerMethodLabel(method.split(':')[0]);
+      const isExit = method.startsWith('movimento_saida');
+      const amount = Number(byMethod[method]) || 0;
+      const display = isExit
+        ? `- ${formatMoneyBR(Math.abs(amount))}`
+        : formatMoneyBR(amount);
+      doc.push(padLine(label, display, receiptWidth));
+    });
+    doc.push('');
+  }
+
+  const channelStats = buildCashDrawerOrderChannelStats(payments);
+  if (channelStats.totalOrders > 0 || channelStats.totalAmount > 0) {
+    doc.push(formatSection('Pedidos por canal', receiptWidth), 'bold');
+    const channelRows = [
+      ['Delivery', channelStats.delivery],
+      ['Retirada', channelStats.pickup],
+      ['Mesas', channelStats.table],
+      ['Marketplaces', channelStats.marketplace],
+    ];
+    channelRows.forEach(([label, bucket]) => {
+      if (bucket.orders > 0 || bucket.total > 0) {
+        doc.push(padLine(label, `${bucket.orders} · ${formatMoneyBR(bucket.total)}`, receiptWidth));
+      }
+    });
+    Object.entries(channelStats.marketplaceByPlatform)
+      .sort((a, b) => b[1].total - a[1].total)
+      .forEach(([platform, bucket]) => {
+        doc.push(padLine(`  ${platform}`, `${bucket.orders} · ${formatMoneyBR(bucket.total)}`, receiptWidth));
+      });
+    if (channelStats.other.orders > 0 || channelStats.other.total > 0) {
+      doc.push(padLine('Outros', `${channelStats.other.orders} · ${formatMoneyBR(channelStats.other.total)}`, receiptWidth));
+    }
+    doc.push(padLine('Total', `${channelStats.totalOrders} · ${formatMoneyBR(channelStats.totalAmount)}`, receiptWidth));
+    doc.push('');
+  }
+
+  doc.push(formatSection('Movimentacoes', receiptWidth), 'bold');
+  const MAX_PAYMENTS = 40;
+  const sorted = [...payments].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
+  sorted.slice(0, MAX_PAYMENTS).forEach((payment) => {
+    doc.push(formatDateTimeBR(payment.created_at));
+    doc.push(padLine(getCashDrawerOrderLabel(payment), formatMoneyBR(payment.amount), receiptWidth));
+    const method = getCashDrawerMethodLabel(String(payment.method || '').split(':')[0]);
+    const customer = payment.customer_name ? ` · ${payment.customer_name}` : '';
+    doc.push(`  ${method}${customer}`);
+  });
+  if (sorted.length > MAX_PAYMENTS) {
+    doc.push(`... e mais ${sorted.length - MAX_PAYMENTS} movimentacoes`);
+  }
+
+  doc.push('');
+  doc.push('Link Eats', 'bold');
+  doc.push('www.linkeats.com.br');
+  doc.push('');
+  doc.push('');
+  doc.push('');
+
+  return doc.toDocument({ kind: 'cash_drawer', header_title: 'Relatorio de Gaveta' });
+}
+
+function formatCashDrawerText(detail, companyName, options = {}) {
+  return documentToPlainText(buildCashDrawerReceipt(detail, companyName, options));
+}
+
 module.exports = {
   formatOrderText,
   formatTabText,
   formatFontSampleText,
+  formatCashDrawerText,
   buildOrderReceipt,
   buildTabReceipt,
   buildFontSampleReceipt,
   buildScaleWeighReceipt,
+  buildCashDrawerReceipt,
   documentToPlainText,
   normalizeFontScale,
   getFontScaleLabel,

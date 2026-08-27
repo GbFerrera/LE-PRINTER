@@ -13,6 +13,8 @@ const {
   buildTabReceipt,
   buildFontSampleReceipt,
   buildScaleWeighReceipt,
+  buildCashDrawerReceipt,
+  formatCashDrawerText,
   documentToPlainText,
   normalizeFontScale,
   getFontScaleLabel,
@@ -234,12 +236,69 @@ async function sendPaperCut(printerName) {
 }
 
 // Backend configuration
-const BACKEND_URL = 'https://api.linkeats.com.br';
+const BACKEND_URL = 'http://192.168.1.5:3333';
 const backendUrl = new URL(BACKEND_URL);
 const wsProtocol = backendUrl.protocol === 'https:' ? 'wss:' : 'ws:';
 const WS_URL = `${wsProtocol}//${backendUrl.host}/ws`;
 
 // Handle print-order event - payload already contains full order data from backend
+async function printCashDrawer(payload = {}) {
+  const routing = getPrinterRouting();
+  const defaults = getRoutingDefaults();
+  const printOptions = {
+    paperWidth: defaults.paperWidth,
+    fontScale: defaults.fontScale,
+  };
+  const receipt = buildCashDrawerReceipt(
+    payload.detail,
+    payload.company_name || companyName,
+    printOptions
+  );
+  const printerName = routing.defaultPrinter || selectedPrinter;
+
+  if (!printerProcess || !printerReady) {
+    console.log('=== SIMULACAO IMPRESSAO GAVETA ===');
+    console.log(formatCashDrawerText(payload.detail, payload.company_name || companyName, printOptions));
+    console.log('=== FIM DA SIMULACAO ===');
+    return {
+      success: true,
+      mode: 'simulation',
+      message: 'Relatorio de gaveta enviado para simulacao',
+    };
+  }
+
+  return sendReceiptToPrinter(receipt, printerName, printOptions);
+}
+
+async function handlePrintCashDrawerEvent(payload = {}) {
+  try {
+    console.log(`🖨️ Print cash drawer event received: ${payload.id}`);
+    const result = await printCashDrawer(payload);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('print-result', {
+        orderId: payload.id,
+        success: result.success,
+        mode: result.mode,
+        message: result.message,
+        auto: false,
+        kind: 'cash_drawer_print',
+      });
+    }
+  } catch (error) {
+    console.error('Error handling print-cash-drawer event:', error);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('print-result', {
+        orderId: payload.id,
+        success: false,
+        mode: 'error',
+        message: error.message,
+        auto: false,
+        kind: 'cash_drawer_print',
+      });
+    }
+  }
+}
+
 async function handlePrintOrderEvent(payload) {
   try {
     console.log(`🖨️ Print order event received: ${payload.id}`);
@@ -1262,6 +1321,9 @@ function connectWebSocket() {
         }
       } else if (data.type === 'print-fiscal') {
         handlePrintFiscalEvent(data.payload || {});
+      } else if (data.type === 'print-cash-drawer') {
+        console.log('🧾 Print cash drawer event received:', data.payload?.id);
+        handlePrintCashDrawerEvent(data.payload || {});
       } else if (data.type === 'order-status-update') {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('order-status-update', data.payload);
