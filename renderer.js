@@ -1980,7 +1980,8 @@ function handleNewOrder(order) {
     if (order?.kind === 'tab_print') {
         showStatus(`Comanda recebida para impressão: mesa ${order.table_name || '-'}`, 'info');
     } else {
-        showStatus(`Novo pedido recebido: #${order.id?.substring(0, 8)}`, 'info');
+        const meta = getOrderListMeta(order);
+        showStatus(`Novo pedido recebido: ${meta.ref}`, 'info');
     }
 }
 
@@ -2030,7 +2031,7 @@ function updateOrdersList() {
     }
     
     if (pendingOrders.length === 0) {
-        ordersList.innerHTML = '<div class="no-orders"><p>Nenhum pedido pendente</p></div>';
+        ordersList.innerHTML = '<div class="no-orders"><p>Nenhum pedido recente</p></div>';
         return;
     }
     
@@ -2068,41 +2069,157 @@ function updateOrdersList() {
     });
 }
 
+const ORDER_PLATFORM_LABELS = {
+    pedeai: 'Pede.ai',
+    ifood: 'iFood',
+    rappi: 'Rappi',
+    ubereats: 'Uber Eats',
+    uber_eats: 'Uber Eats',
+    '99food': '99Food',
+    keeta: 'Keeta',
+    aiqfome: 'Aiqfome',
+    anotaai: 'Anota AI',
+    anota_ai: 'Anota AI',
+    deliverymuch: 'Delivery Much',
+    glovo: 'Glovo',
+    menudino: 'MenuDino',
+    olaclick: 'OlaClick',
+    whatsapp: 'WhatsApp',
+};
+
+function normalizeOrderPlatformKey(value) {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[\s.-]+/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_|_$/g, '');
+}
+
+function resolveOrderPlatform(order) {
+    const candidates = [order?.platform, order?.source, order?.channel, order?.marketplace, order?.origin];
+    for (const candidate of candidates) {
+        const normalized = normalizeOrderPlatformKey(candidate);
+        if (normalized) return normalized;
+    }
+    const observation = String(order?.observation || '');
+    if (/pedido pede\.ai/i.test(observation) || /pede\.ai/i.test(observation)) {
+        return 'pedeai';
+    }
+    return '';
+}
+
+function formatOrderPlatformLabel(platform) {
+    const key = normalizeOrderPlatformKey(platform);
+    if (!key) return '';
+    if (ORDER_PLATFORM_LABELS[key]) return ORDER_PLATFORM_LABELS[key];
+    return key
+        .split('_')
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ');
+}
+
+function buildOrderBadges(order) {
+    if (order?.kind === 'tab_print') {
+        return [{ label: 'Comanda', tone: 'table' }];
+    }
+
+    const badges = [];
+    const platform = resolveOrderPlatform(order);
+    const orderType = String(order?.order_type || '').toLowerCase();
+
+    if (platform === 'pedeai') {
+        badges.push({ label: 'Pede.ai', tone: 'marketplace' });
+    } else if (platform) {
+        badges.push({ label: formatOrderPlatformLabel(platform), tone: 'marketplace' });
+    }
+
+    if (orderType === 'pickup') {
+        badges.push({ label: 'Retirada', tone: 'pickup' });
+    } else if (orderType === 'delivery' || order?.address_street || order?.delivery_address) {
+        badges.push({ label: 'Delivery', tone: 'delivery' });
+    } else if (orderType === 'table' || order?.table_name || order?.waiter_name || order?.print_location_type === 'card' || order?.tab_card_label) {
+        badges.push({ label: 'Mesa', tone: 'table' });
+    }
+
+    if (!badges.length) {
+        badges.push({ label: 'Pedido', tone: 'other' });
+    }
+
+    return badges;
+}
+
+function getOrderListMeta(order) {
+    const total = Number.parseFloat(order?.total || 0) || 0;
+    const createdAt = order?.created_at ? new Date(order.created_at) : new Date();
+    const timeStr = createdAt.toLocaleTimeString('pt-BR', {
+        hour: '2-digit',
+        minute: '2-digit',
+    });
+
+    if (order?.kind === 'tab_print') {
+        const tabOrdersCount = Array.isArray(order.orders) ? order.orders.length : 0;
+        return {
+            badges: buildOrderBadges(order),
+            ref: order.tab_id ? `Comanda #${order.tab_id}` : 'Comanda',
+            title: order.table_name ? `Mesa ${order.table_name}` : (order.customer_name || 'Comanda aberta'),
+            meta: `${tabOrdersCount} pedido(s) · R$ ${total.toFixed(2)}`,
+            timeStr,
+        };
+    }
+
+    const badges = buildOrderBadges(order);
+    const platform = resolveOrderPlatform(order);
+    const orderNumber = order?.order_number != null && order.order_number !== ''
+        ? String(order.order_number)
+        : null;
+    const ref = orderNumber
+        ? `#${orderNumber}`
+        : (platform === 'pedeai' && order?.external_id
+            ? `#${String(order.external_id).slice(-8)}`
+            : `#${String(order?.id || '0000').substring(0, 8)}`);
+
+    const itemsCount = Array.isArray(order?.items) ? order.items.length : 0;
+    const itemsText = itemsCount === 1 ? '1 item' : `${itemsCount} itens`;
+
+    return {
+        badges,
+        ref,
+        title: order?.customer_name || 'Cliente não informado',
+        meta: `${itemsText} · R$ ${total.toFixed(2)}`,
+        timeStr,
+    };
+}
+
+function renderOrderBadgesHtml(badges) {
+    return (badges || []).map((badge) =>
+        `<span class="order-badge order-badge--${escapeHtml(badge.tone || 'other')}">${escapeHtml(badge.label)}</span>`
+    ).join('');
+}
+
 // Create order element
 function createOrderElement(order) {
-    const isTabPrint = order?.kind === 'tab_print';
-    const createdAt = new Date(order.created_at);
-    const timeStr = createdAt.toLocaleTimeString('pt-BR', { 
-        hour: '2-digit', 
-        minute: '2-digit' 
-    });
-    
-    const itemsCount = order.items ? order.items.length : 0;
-    const itemsText = itemsCount === 1 ? '1 item' : `${itemsCount} itens`;
-    const tabOrdersCount = Array.isArray(order.orders) ? order.orders.length : 0;
-    const secondaryLine = isTabPrint
-        ? `${tabOrdersCount} pedido(s) • Total: R$ ${parseFloat(order.total || 0).toFixed(2)}`
-        : `${itemsText} • Total: R$ ${parseFloat(order.total || 0).toFixed(2)}`;
-    const title = isTabPrint ? `Comanda Mesa ${order.table_name || '-'}` : (order.customer_name || 'Cliente não informado');
-    const idLabel = isTabPrint ? `COMANDA ${order.tab_id || '-'}` : `#${order.id}`;
-    
+    const meta = getOrderListMeta(order);
+
     return `
-        <div class="order-item" data-order-id="${order.id}">
-            <div class="order-header">
-                <span class="order-id">${idLabel}</span>
-                <span class="order-time">${timeStr}</span>
-            </div>
-            <div class="order-customer">
-                <strong>${title}</strong>
-            </div>
-            <div class="order-items">
-                ${secondaryLine}
+        <div class="order-item" data-order-id="${escapeHtml(order.id)}">
+            <div class="order-item-main">
+                <div class="order-item-top">
+                    <div class="order-item-badges">${renderOrderBadgesHtml(meta.badges)}</div>
+                    <span class="order-time">${escapeHtml(meta.timeStr)}</span>
+                </div>
+                <div class="order-item-ref">${escapeHtml(meta.ref)}</div>
+                <div class="order-item-title">${escapeHtml(meta.title)}</div>
+                <div class="order-item-meta">${escapeHtml(meta.meta)}</div>
             </div>
             <div class="order-actions">
-                <button class="btn-primary print-order-btn" data-order-id="${order.id}">
+                <button class="btn-primary print-order-btn" data-order-id="${escapeHtml(order.id)}" type="button">
                     Imprimir
                 </button>
-                <button class="btn-secondary dismiss-order-btn" data-order-id="${order.id}">
+                <button class="btn-secondary dismiss-order-btn" data-order-id="${escapeHtml(order.id)}" type="button">
                     Dispensar
                 </button>
             </div>
@@ -2179,13 +2296,16 @@ function createOrderDetailHTML(order) {
         }).join('');
     }
     
+    const detailMeta = getOrderListMeta(order);
+
     return `
         <div class="order-detail-section">
             <h4>Informações do Pedido</h4>
-            <p><strong>Número:</strong> #${order.id}</p>
+            <div class="order-item-badges" style="margin-bottom: 12px;">${renderOrderBadgesHtml(detailMeta.badges)}</div>
+            <p><strong>Número:</strong> ${escapeHtml(detailMeta.ref)}</p>
             <p><strong>Data:</strong> ${dateStr}</p>
-            <p><strong>Cliente:</strong> ${order.customer_name || 'Não informado'}</p>
-            <p><strong>Telefone:</strong> ${order.phone || 'Não informado'}</p>
+            <p><strong>Cliente:</strong> ${escapeHtml(order.customer_name || 'Não informado')}</p>
+            <p><strong>Telefone:</strong> ${escapeHtml(order.phone || order.customer_phone || 'Não informado')}</p>
             ${order.total ? `<p><strong>Total:</strong> R$ ${parseFloat(order.total).toFixed(2)}</p>` : ''}
         </div>
         
