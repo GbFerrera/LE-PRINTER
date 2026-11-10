@@ -9,11 +9,13 @@ const {
   formatOrderText,
   formatTabText,
   formatFontSampleText,
+  formatComplementKitchenText,
   buildOrderReceipt,
   buildTabReceipt,
   buildFontSampleReceipt,
   buildScaleWeighReceipt,
   buildCashDrawerReceipt,
+  buildComplementKitchenReceipt,
   formatCashDrawerText,
   documentToPlainText,
   normalizeFontScale,
@@ -25,6 +27,7 @@ const {
   normalizePrinterRouting,
   splitOrderPrintJobs,
   splitTabPrintJobs,
+  appendComplementKitchenJobs,
   resolvePrintOptionsForPrinter,
   filterJobsForAutoPrint,
 } = require('./printerRouting');
@@ -179,6 +182,13 @@ function buildReceiptForOrder(order, job = {}) {
 
   if (order?.kind === 'tab_print') {
     return buildTabReceipt(job.tabData || order, companyName, options);
+  }
+  if (job.jobKind === 'complement_kitchen') {
+    return buildComplementKitchenReceipt(job.order || order, companyName, {
+      ...options,
+      groupName: job.groupName,
+      headerTitle: job.groupName,
+    });
   }
   return buildOrderReceipt(job.order || order, companyName, options);
 }
@@ -1051,6 +1061,48 @@ function sendPrinterCommand(command) {
   });
 }
 
+function simulatePrintJobs(jobs, order, routing, defaults) {
+  console.log('=== SIMULAÇÃO DE IMPRESSÃO ===');
+  for (const job of jobs) {
+    const target = job.printer || routing.defaultPrinter || 'padrão do sistema';
+    const jobOptions = {
+      paperWidth: job.paperWidth || defaults.paperWidth,
+      fontScale: job.fontScale != null ? job.fontScale : defaults.fontScale,
+    };
+    console.log(`--- Via: ${target}${job.partial ? ' (parcial)' : ''}${job.jobKind === 'complement_kitchen' ? ' (cozinha)' : ''} · fonte ${jobOptions.fontScale} · ${jobOptions.paperWidth} ---`);
+    console.log(order?.kind === 'tab_print'
+      ? formatTabText(job.tabData || order, companyName, {
+        ...jobOptions,
+        includePayment: job.includePayment,
+        routeLabel: job.routeLabel,
+        itemFilter: job.itemFilter,
+      })
+      : job.jobKind === 'complement_kitchen'
+          ? formatComplementKitchenText(job.order || order, companyName, {
+            ...jobOptions,
+            items: job.order?.items,
+            groupName: job.groupName,
+            headerTitle: job.groupName,
+          })
+        : formatOrderText(job.order || order, companyName, {
+          ...jobOptions,
+          items: job.order?.items,
+          includePayment: job.includePayment,
+          includeClient: job.includeClient,
+          routeLabel: job.routeLabel,
+        }));
+  }
+  console.log('=== FIM DA SIMULAÇÃO ===');
+  const count = jobs.length;
+  return {
+    success: true,
+    mode: 'simulation',
+    message: count > 1
+      ? `${count} vias enviadas para simulação`
+      : 'Sem impressora conectada — enviado para fila de simulação',
+  };
+}
+
 // Print order function
 // Returns { success, mode: 'simulation'|'printer', message }
 async function printOrder(order, options = {}) {
@@ -1060,6 +1112,7 @@ async function printOrder(order, options = {}) {
   let jobs = order?.kind === 'tab_print'
     ? splitTabPrintJobs(order, routing, defaults)
     : splitOrderPrintJobs(order, routing, defaults);
+  jobs = appendComplementKitchenJobs(jobs, order, routing, defaults);
 
   if (auto) {
     if (!shouldAutoPrintOrder(order, getAutoPrintFilters())) {
@@ -1093,38 +1146,7 @@ async function printOrder(order, options = {}) {
   }
 
   if (!printerProcess || !printerReady) {
-    console.log('=== SIMULAÇÃO DE IMPRESSÃO ===');
-    for (const job of jobs) {
-      const target = job.printer || routing.defaultPrinter || 'padrão do sistema';
-      const jobOptions = {
-        paperWidth: job.paperWidth || defaults.paperWidth,
-        fontScale: job.fontScale != null ? job.fontScale : defaults.fontScale,
-      };
-      console.log(`--- Via: ${target}${job.partial ? ' (parcial)' : ''} · fonte ${jobOptions.fontScale} · ${jobOptions.paperWidth} ---`);
-      console.log(order?.kind === 'tab_print'
-        ? formatTabText(job.tabData || order, companyName, {
-          ...jobOptions,
-          includePayment: job.includePayment,
-          routeLabel: job.routeLabel,
-          itemFilter: job.itemFilter,
-        })
-        : formatOrderText(job.order || order, companyName, {
-          ...jobOptions,
-          items: job.order?.items,
-          includePayment: job.includePayment,
-          includeClient: job.includeClient,
-          routeLabel: job.routeLabel,
-        }));
-    }
-    console.log('=== FIM DA SIMULAÇÃO ===');
-    const count = jobs.length;
-    return {
-      success: true,
-      mode: 'simulation',
-      message: count > 1
-        ? `${count} vias enviadas para simulação`
-        : 'Sem impressora conectada — enviado para fila de simulação',
-    };
+    return simulatePrintJobs(jobs, order, routing, defaults);
   }
 
   try {
@@ -1140,7 +1162,8 @@ async function printOrder(order, options = {}) {
         }
       );
       if (!result.success) {
-        return result;
+        console.warn('Impressão física indisponível, usando simulação:', result.message);
+        return simulatePrintJobs(jobs, order, routing, defaults);
       }
       messages.push(result.message);
     }

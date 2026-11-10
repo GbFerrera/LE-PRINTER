@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
-const { normalizeFontScale, DEFAULT_FONT_SCALE } = require('./printFormat');
+const { normalizeFontScale, DEFAULT_FONT_SCALE, collectSeparatePrintGroups } = require('./printFormat');
 
 function createRouteId() {
   if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -269,6 +269,30 @@ function splitOrderPrintJobs(order, routing, defaults = {}) {
   });
 }
 
+function appendComplementKitchenJobs(jobs, order, routing, defaults = {}) {
+  const currentJobs = Array.isArray(jobs) ? jobs : [];
+  if (order?.kind === 'tab_print') return currentJobs;
+
+  const separateGroups = collectSeparatePrintGroups(order?.items);
+  if (!separateGroups.length) return currentJobs;
+
+  const normalized = normalizePrinterRouting(routing, defaults);
+  return [
+    ...currentJobs,
+    ...separateGroups.map((group) => attachJobPrintOptions({
+      printer: normalized.defaultPrinter || null,
+      isDefault: true,
+      partial: false,
+      includePayment: false,
+      includeClient: false,
+      routeLabel: '',
+      jobKind: 'complement_kitchen',
+      groupName: group.groupName || 'Complementos',
+      order: { ...order, items: group.items },
+    }, normalized, defaults)),
+  ];
+}
+
 function splitTabPrintJobs(tabData, routing, defaults = {}) {
   const normalized = normalizePrinterRouting(routing, defaults);
   if (!hasActiveRouting(normalized)) {
@@ -335,6 +359,7 @@ module.exports = {
   hasActiveRouting,
   splitOrderPrintJobs,
   splitTabPrintJobs,
+  appendComplementKitchenJobs,
   filterJobsForAutoPrint,
   isMainPrinterJob,
   getItemCategoryId,

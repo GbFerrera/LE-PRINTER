@@ -325,6 +325,169 @@ function formatItemBlock(item, index, receiptWidth = 32) {
   return lines;
 }
 
+function itemHasComplements(item) {
+  return aggregateComplements(item?.complements).length > 0;
+}
+
+function collectItemsWithComplements(items) {
+  return (items || []).filter(itemHasComplements);
+}
+
+function getComplementPrintMeta(complement) {
+  const nested = complement?.complement || complement?.Complement || {};
+  return {
+    printSeparately: Boolean(nested.print_separately ?? complement?.print_separately),
+    groupId: nested.group_id || complement?.group_id || '',
+    groupName: String(
+      nested.print_group_name ||
+      complement?.print_group_name ||
+      nested.group_name ||
+      complement?.group_name ||
+      ''
+    ).trim(),
+  };
+}
+
+function collectSeparatePrintGroups(items) {
+  const groups = new Map();
+
+  (items || []).forEach((item) => {
+    const byGroup = new Map();
+    (item?.complements || []).forEach((complement) => {
+      const meta = getComplementPrintMeta(complement);
+      if (!meta.printSeparately) return;
+      const key = meta.groupId || meta.groupName;
+      if (!key) return;
+      if (!byGroup.has(key)) {
+        byGroup.set(key, {
+          groupId: meta.groupId,
+          groupName: meta.groupName,
+          complements: [],
+        });
+      }
+      const bucket = byGroup.get(key);
+      bucket.complements.push(complement);
+      if (meta.groupName && !bucket.groupName) bucket.groupName = meta.groupName;
+    });
+
+    byGroup.forEach((group, key) => {
+      if (!groups.has(key)) {
+        groups.set(key, {
+          groupId: group.groupId,
+          groupName: group.groupName,
+          items: [],
+        });
+      }
+      groups.get(key).items.push({
+        ...item,
+        complements: group.complements,
+      });
+    });
+  });
+
+  return Array.from(groups.values());
+}
+
+function formatKitchenItemBlock(item, index, receiptWidth = 32) {
+  const lines = [];
+  const isWeighable =
+    item?.unit === 'kg' ||
+    item?.item_type === 'weighable' ||
+    item?.type === 'weighable';
+  const qty = Number(item?.quantity) || (isWeighable ? 0 : 1);
+  const itemName = (item?.product?.name || item?.name || 'Item').toUpperCase();
+
+  if (isWeighable) {
+    lines.push({
+      text: `${formatWeightKg(qty)} ${itemName}`,
+      style: 'bold',
+    });
+  } else {
+    const safeQty = Math.max(1, qty);
+    const unitLabel = safeQty === 1 ? '1 un' : `${safeQty} un`;
+    lines.push({
+      text: `${unitLabel} ${itemName}`,
+      style: 'bold',
+    });
+  }
+
+  aggregateComplements(item?.complements).forEach((c) => {
+    const qtyPrefix = c.quantity > 1 ? `${c.quantity}x ` : '';
+    if (String(c.name).includes('\n')) {
+      String(c.name).split('\n').forEach((part) => {
+        const trimmed = part.trim();
+        if (!trimmed) return;
+        lines.push(`> ${trimmed}`);
+      });
+      return;
+    }
+    let label;
+    if (c.isNegative) {
+      label = c.groupName ? `Sem ${c.groupName.toLowerCase()}: ${c.name}` : `Sem: ${c.name}`;
+    } else if (c.groupName) {
+      label = `${c.groupName.toLowerCase()}: ${qtyPrefix}${c.name}`;
+    } else {
+      label = `${qtyPrefix}${c.name}`;
+    }
+    lines.push(`> ${label}`);
+  });
+
+  const itemObsRaw = item?.observations ?? item?.observation ?? item?.observacao ?? item?.notes ?? item?.obs ?? '';
+  const itemObs = typeof itemObsRaw === 'string' ? itemObsRaw.trim() : String(itemObsRaw || '').trim();
+  if (itemObs) {
+    wrapText(`Obs: ${itemObs}`, receiptWidth).forEach((line) => lines.push(`> ${line}`));
+  }
+
+  if (index >= 0) lines.push('');
+  return lines;
+}
+
+function buildComplementKitchenReceipt(order, companyName, options = {}) {
+  const receiptWidth = getReceiptWidth(options.paperWidth);
+  const doc = createStyledReceipt(options);
+  const empresa = companyName || order?.company_name || 'LINK EATS';
+  const orderNumber = formatDisplayNumber(order?.id, order?.order_number);
+  const createdAt = formatDateTimeBR(order?.created_at);
+  const items = collectItemsWithComplements(
+    Array.isArray(options.items) ? options.items : (order?.items || [])
+  );
+
+  const groupTitle = String(options.headerTitle || options.groupName || 'Complementos').trim() || 'Complementos';
+
+  doc.push(`ESTABELECIMENTO: ${empresa}`, 'title');
+  doc.push(groupTitle.toUpperCase(), 'bold');
+  doc.push(padLine(`Pedido: ${orderNumber}`, `Data: ${createdAt}`, receiptWidth));
+
+  if (String(order?.order_type || '').toLowerCase() === 'table') {
+    appendPrintLocationLines(doc, order, receiptWidth);
+  }
+  if (order?.waiter_name) doc.push(`Garçom: ${order.waiter_name}`);
+  doc.push('');
+
+  doc.push(formatSection(groupTitle, receiptWidth), 'bold');
+  if (items.length) {
+    items.forEach((item, index) => {
+      doc.pushAll(formatKitchenItemBlock(item, index, receiptWidth));
+    });
+  } else {
+    doc.push('Nenhum complemento');
+    doc.push('');
+  }
+
+  doc.push('');
+  doc.push('');
+  doc.push('');
+
+  return doc.toDocument({
+    kind: 'complement_kitchen',
+    header_title: String(options.headerTitle || options.groupName || 'COMPLEMENTOS').toUpperCase(),
+  });
+}
+
+function formatComplementKitchenText(order, companyName, options = {}) {
+  return documentToPlainText(buildComplementKitchenReceipt(order, companyName, options));
+}
+
 function resolvePrintLocation(data = {}) {
   const locationType = String(data?.print_location_type || '').toLowerCase();
   const label = String(
@@ -975,11 +1138,16 @@ module.exports = {
   formatTabText,
   formatFontSampleText,
   formatCashDrawerText,
+  formatComplementKitchenText,
   buildOrderReceipt,
   buildTabReceipt,
   buildFontSampleReceipt,
   buildScaleWeighReceipt,
   buildCashDrawerReceipt,
+  buildComplementKitchenReceipt,
+  itemHasComplements,
+  collectItemsWithComplements,
+  collectSeparatePrintGroups,
   documentToPlainText,
   normalizeFontScale,
   getFontScaleLabel,
