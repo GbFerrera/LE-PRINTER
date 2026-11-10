@@ -458,6 +458,9 @@ function buildComplementKitchenReceipt(order, companyName, options = {}) {
   doc.push(groupTitle.toUpperCase(), 'bold');
   doc.push(padLine(`Pedido: ${orderNumber}`, `Data: ${createdAt}`, receiptWidth));
 
+  const customerName = String(order?.customer_name || order?.tab_customer_name || '').trim();
+  if (customerName) doc.push(`Cliente: ${customerName}`);
+
   if (String(order?.order_type || '').toLowerCase() === 'table') {
     appendPrintLocationLines(doc, order, receiptWidth);
   }
